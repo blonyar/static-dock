@@ -1,0 +1,62 @@
+[
+  {
+    "path": "data/manifest.json",
+    "bytes": 4152
+  },
+  {
+    "path": "data/records.json",
+    "bytes": 3102892
+  },
+  {
+    "path": "images/test_image_01_1280x720.png",
+    "bytes": 2702103
+  },
+  {
+    "path": "images/test_image_02_1280x720.png",
+    "bytes": 2701159
+  },
+  {
+    "path": "images/test_image_03_1280x720.png",
+    "bytes": 2701433
+  },
+  {
+    "path": "images/test_image_04_1280x720.png",
+    "bytes": 2701187
+  },
+  {
+    "path": "images/test_image_05_1280x720.png",
+    "bytes": 2701450
+  },
+  {
+    "path": "images/test_image_06_1280x720.png",
+    "bytes": 2701189
+  },
+  {
+    "path": "images/test_image_07_1920x1080.png",
+    "bytes": 6116107
+  },
+  {
+    "path": "images/test_image_08_1920x1080.png",
+    "bytes": 6116199
+  },
+  {
+    "path": "images/test_image_09_1920x1080.png",
+    "bytes": 6116335
+  },
+  {
+    "path": "images/test_image_10_1920x1080.png",
+    "bytes": 6115270
+  },
+  {
+    "path": "images/test_image_11_1920x1080.png",
+    "bytes": 6115908
+  },
+  {
+    "path": "images/test_image_12_1920x1080.png",
+    "bytes": 6115743
+  },
+  {
+    "path": "index.html",
+    "bytes": 3411
+  }
+]

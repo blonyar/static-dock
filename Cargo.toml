@@ -1,0 +1,10 @@
+[package]
+name = "static-dock"
+version = "0.1.0"
+edition = "2021"
+description = "A portable local static resource server for LAN classrooms and Android testing."
+license = "MIT"
+
+[[bin]]
+name = "static-dock"
+path = "src/main.rs"

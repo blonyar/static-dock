@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>StaticDock Load Test</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f6f7f9; color: #1d2430; }
+    header { padding: 18px 22px; background: #ffffff; border-bottom: 1px solid #d9dde5; position: sticky; top: 0; z-index: 2; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    p { margin: 0; color: #56616f; }
+    main { padding: 18px 22px 28px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+    figure { margin: 0; background: #fff; border: 1px solid #d9dde5; border-radius: 6px; overflow: hidden; }
+    img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+    figcaption { padding: 8px 10px; font-size: 13px; }
+    .videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 18px 0; }
+    video { width: 100%; background: #000; border-radius: 6px; }
+    code { background: #eceff3; padding: 2px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>StaticDock Load Test</h1>
+    <p>Images: 12 / Videos: bring your own MP4 / Records: 10000. Data: <code>/loadtest/data/records.json</code></p>
+  </header>
+  <main>
+    <section class="videos"></section>
+    <section class="grid"><figure><img src="/loadtest/images/test_image_01_1280x720.png" loading="lazy"><figcaption>Test image 01 - 2638 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_02_1280x720.png" loading="lazy"><figcaption>Test image 02 - 2637 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_03_1280x720.png" loading="lazy"><figcaption>Test image 03 - 2638 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_04_1280x720.png" loading="lazy"><figcaption>Test image 04 - 2637 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_05_1280x720.png" loading="lazy"><figcaption>Test image 05 - 2638 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_06_1280x720.png" loading="lazy"><figcaption>Test image 06 - 2637 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_07_1920x1080.png" loading="lazy"><figcaption>Test image 07 - 5972 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_08_1920x1080.png" loading="lazy"><figcaption>Test image 08 - 5972 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_09_1920x1080.png" loading="lazy"><figcaption>Test image 09 - 5972 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_10_1920x1080.png" loading="lazy"><figcaption>Test image 10 - 5971 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_11_1920x1080.png" loading="lazy"><figcaption>Test image 11 - 5972 KB</figcaption></figure><figure><img src="/loadtest/images/test_image_12_1920x1080.png" loading="lazy"><figcaption>Test image 12 - 5972 KB</figcaption></figure></section>
+  </main>
+</body>
+</html>

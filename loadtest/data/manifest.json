@@ -1,0 +1,104 @@
+{
+  "generatedAt": "2026-06-05T01:34:47+08:00",
+  "images": [
+    {
+      "id": 1,
+      "name": "Test image 01",
+      "url": "/loadtest/images/test_image_01_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "bytes": 2702103
+    },
+    {
+      "id": 2,
+      "name": "Test image 02",
+      "url": "/loadtest/images/test_image_02_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "bytes": 2701159
+    },
+    {
+      "id": 3,
+      "name": "Test image 03",
+      "url": "/loadtest/images/test_image_03_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "bytes": 2701433
+    },
+    {
+      "id": 4,
+      "name": "Test image 04",
+      "url": "/loadtest/images/test_image_04_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "bytes": 2701187
+    },
+    {
+      "id": 5,
+      "name": "Test image 05",
+      "url": "/loadtest/images/test_image_05_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "bytes": 2701450
+    },
+    {
+      "id": 6,
+      "name": "Test image 06",
+      "url": "/loadtest/images/test_image_06_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "bytes": 2701189
+    },
+    {
+      "id": 7,
+      "name": "Test image 07",
+      "url": "/loadtest/images/test_image_07_1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 6116107
+    },
+    {
+      "id": 8,
+      "name": "Test image 08",
+      "url": "/loadtest/images/test_image_08_1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 6116199
+    },
+    {
+      "id": 9,
+      "name": "Test image 09",
+      "url": "/loadtest/images/test_image_09_1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 6116335
+    },
+    {
+      "id": 10,
+      "name": "Test image 10",
+      "url": "/loadtest/images/test_image_10_1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 6115270
+    },
+    {
+      "id": 11,
+      "name": "Test image 11",
+      "url": "/loadtest/images/test_image_11_1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 6115908
+    },
+    {
+      "id": 12,
+      "name": "Test image 12",
+      "url": "/loadtest/images/test_image_12_1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 6115743
+    }
+  ],
+  "videos": [],
+  "recordsUrl": "/loadtest/data/records.json",
+  "recordCount": 10000
+}
