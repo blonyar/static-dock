@@ -22,6 +22,18 @@ StaticDock 是一个轻量、可随身携带的本地静态资源服务器。把
 
 ## 快速开始
 
+普通用户建议从 GitHub Releases 下载 `static-dock-windows-x64.zip`，解压后双击：
+
+```text
+start-static-dock-gui.bat
+```
+
+如果只想用命令行窗口直接启动，双击：
+
+```text
+start-static-dock.bat
+```
+
 下载或克隆仓库后，在 Windows 上双击：
 
 ```text
