@@ -26,6 +26,7 @@ public class StaticDockForm : Form
 
     readonly string dir;
     readonly string exe;
+    readonly string iconFile;
     readonly string pidFile;
     readonly string settingsDir;
     readonly string settingsFile;
@@ -38,6 +39,7 @@ public class StaticDockForm : Form
     TextBox rootText, logBox;
     NumericUpDown portBox, workersBox, queueBox;
     Button browseBtn, startBtn, stopBtn, openBtn, folderBtn, copyBtn, resetBtn, checkPortBtn;
+    CheckBox autoStartBox, openAfterStartBox;
     ComboBox langBox;
     Timer restartTimer;
     string lastUrls = "";
@@ -46,6 +48,7 @@ public class StaticDockForm : Form
     {
         dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         exe = Path.Combine(dir, "static-dock.exe");
+        iconFile = Path.Combine(dir, "assets\\icon.png");
         pidFile = Path.Combine(dir, "static-dock-server.pid");
         settingsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StaticDock");
         settingsFile = Path.Combine(settingsDir, "settings.ini");
@@ -81,6 +84,8 @@ public class StaticDockForm : Form
             case "start": return en ? "Start" : "启动服务";
             case "stop": return en ? "Stop" : "停止服务";
             case "open": return en ? "Open Manager" : "打开资源库";
+            case "autostart": return en ? "Auto start" : "启动时自动开启服务";
+            case "openAfterStart": return en ? "Open browser after start" : "启动后自动打开资源库";
             case "openFolder": return en ? "Open Folder" : "打开文件夹";
             case "checkPort": return en ? "Check Port" : "检测端口";
             case "copy": return en ? "Copy URLs" : "复制地址";
@@ -121,6 +126,7 @@ public class StaticDockForm : Form
     void BuildUi()
     {
         Text = T("title");
+        TryLoadWindowIcon();
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(940, 640);
         MinimumSize = new Size(850, 570);
@@ -177,8 +183,15 @@ public class StaticDockForm : Form
         resetBtn = AddButton(662, 206); resetBtn.Click += delegate { ResetDefaults(true); };
         checkPortBtn = AddButton(784, 206); checkPortBtn.Click += delegate { CheckPort(); };
 
-        logBox = new TextBox { Left = 24, Top = 260, Width = 880, Height = 300, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };
+        logBox = new TextBox { Left = 24, Top = 290, Width = 880, Height = 270, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };
         Controls.Add(logBox);
+
+        autoStartBox = new CheckBox { Left = 24, Top = 252, Width = 180, Height = 24 };
+        autoStartBox.CheckedChanged += SettingChanged;
+        Controls.Add(autoStartBox);
+        openAfterStartBox = new CheckBox { Left = 220, Top = 252, Width = 220, Height = 24 };
+        openAfterStartBox.CheckedChanged += SettingChanged;
+        Controls.Add(openAfterStartBox);
 
         restartTimer = new Timer();
         restartTimer.Interval = 900;
@@ -209,6 +222,8 @@ public class StaticDockForm : Form
         copyBtn.Text = T("copy");
         resetBtn.Text = T("reset");
         checkPortBtn.Text = T("checkPort");
+        autoStartBox.Text = T("autostart");
+        openAfterStartBox.Text = T("openAfterStart");
         hint.Text = IsRunning() ? T("hintRunning") : T("hintDefault");
         status.Text = IsRunning() ? T("running") : T("stopped");
     }
@@ -218,6 +233,22 @@ public class StaticDockForm : Form
         startBtn.Enabled = !r; stopBtn.Enabled = r; openBtn.Enabled = r; copyBtn.Enabled = r;
         status.Text = r ? T("running") : T("stopped");
         status.BackColor = r ? Color.FromArgb(22, 163, 74) : Color.FromArgb(239, 68, 68);
+    }
+
+    void TryLoadWindowIcon()
+    {
+        try
+        {
+            if (File.Exists(iconFile))
+            {
+                using (var bitmap = new Bitmap(iconFile))
+                {
+                    IntPtr handle = bitmap.GetHicon();
+                    Icon = Icon.FromHandle(handle);
+                }
+            }
+        }
+        catch { }
     }
 
     void OpenResourceFolder()
@@ -274,6 +305,7 @@ public class StaticDockForm : Form
         if (wasRunning) StopServer(false);
         loading = true;
         rootText.Text = DefaultRoot(); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue;
+        autoStartBox.Checked = false; openAfterStartBox.Checked = false;
         loading = false;
         SaveSettings();
         Log(T("resetDone"));
@@ -284,6 +316,7 @@ public class StaticDockForm : Form
     {
         loading = true;
         rootText.Text = DefaultRoot(); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue;
+        autoStartBox.Checked = false; openAfterStartBox.Checked = false;
         try
         {
             if (File.Exists(settingsFile))
@@ -297,6 +330,8 @@ public class StaticDockForm : Form
                     else if (k == "workers") SetNum(workersBox, v);
                     else if (k == "queue") SetNum(queueBox, v);
                     else if (k == "lang") lang = v == "en" ? "en" : "zh";
+                    else if (k == "autoStart") autoStartBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
+                    else if (k == "openAfterStart") openAfterStartBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
                 }
             }
         }
@@ -305,6 +340,7 @@ public class StaticDockForm : Form
         loading = false;
         SaveSettings();
         Log(T("bootLog"));
+        if (autoStartBox.Checked) StartServer();
     }
 
     void SetNum(NumericUpDown box, string text) { decimal v; if (Decimal.TryParse(text, out v) && v >= box.Minimum && v <= box.Maximum) box.Value = v; }
@@ -313,7 +349,7 @@ public class StaticDockForm : Form
         try
         {
             if (!Directory.Exists(settingsDir)) Directory.CreateDirectory(settingsDir);
-            File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lang=" + lang });
+            File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lang=" + lang, "autoStart=" + (autoStartBox.Checked ? "1" : "0"), "openAfterStart=" + (openAfterStartBox.Checked ? "1" : "0") });
         }
         catch { }
     }
@@ -348,6 +384,7 @@ public class StaticDockForm : Form
             Log(T("port") + ": " + actualPort + "    " + T("workers") + ": " + (int)workersBox.Value + "    " + T("queue") + ": " + (int)queueBox.Value);
             Log(T("openTip"));
             SetRunning(true); hint.Text = T("hintRunning");
+            if (openAfterStartBox.Checked) Process.Start("http://127.0.0.1:" + actualPort + "/?lang=" + lang);
         }
         catch (Exception ex)
         {
