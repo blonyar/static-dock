@@ -246,6 +246,17 @@ public class StaticDockForm : Form
     {
         try
         {
+            Icon embedded = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (embedded != null)
+            {
+                Icon = embedded;
+                return;
+            }
+        }
+        catch { }
+
+        try
+        {
             if (File.Exists(iconFile))
             {
                 using (var bitmap = new Bitmap(iconFile))

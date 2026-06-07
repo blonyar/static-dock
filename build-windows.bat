@@ -7,6 +7,7 @@ set "DIST_FULL=dist\static-dock-windows-x64-with-loadtest"
 set "ZIP=dist\static-dock-windows-x64.zip"
 set "ZIP_FULL=dist\static-dock-windows-x64-with-loadtest.zip"
 set "CSC=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+set "ICON=assets\icon.ico"
 
 echo ========================================
 echo  Building StaticDock Windows packages
@@ -24,7 +25,7 @@ if not exist "%CSC%" (
     echo %CSC%
     exit /b 1
 )
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%CSC%' /target:winexe /out:StaticDockGui.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll StaticDockGui.cs"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%CSC%' /target:winexe /win32icon:'%ICON%' /out:StaticDockGui.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll gui\StaticDockGui.cs"
 if errorlevel 1 exit /b %errorlevel%
 
 echo [3/6] Refreshing standard dist folder...
@@ -33,9 +34,9 @@ mkdir "%DIST%"
 
 copy /y "static-dock.exe" "%DIST%\static-dock.exe" >nul
 copy /y "StaticDockGui.exe" "%DIST%\StaticDockGui.exe" >nul
-copy /y "start-static-dock-gui.bat" "%DIST%\start-static-dock-gui.bat" >nul
-copy /y "start-static-dock.bat" "%DIST%\start-static-dock.bat" >nul
-copy /y "stop-static-dock.bat" "%DIST%\stop-static-dock.bat" >nul
+copy /y "package\windows\start-static-dock-gui.bat" "%DIST%\start-static-dock-gui.bat" >nul
+copy /y "package\windows\start-static-dock.bat" "%DIST%\start-static-dock.bat" >nul
+copy /y "package\windows\stop-static-dock.bat" "%DIST%\stop-static-dock.bat" >nul
 copy /y "README.md" "%DIST%\README.md" >nul
 copy /y "LICENSE" "%DIST%\LICENSE" >nul
 xcopy /e /i /y "resources" "%DIST%\resources" >nul
@@ -46,8 +47,8 @@ echo [4/6] Refreshing full dist folder with loadtest...
 if exist "%DIST_FULL%" rmdir /s /q "%DIST_FULL%"
 xcopy /e /i /y "%DIST%" "%DIST_FULL%" >nul
 xcopy /e /i /y "loadtest" "%DIST_FULL%\loadtest" >nul
-copy /y "run-loadtest.bat" "%DIST_FULL%\run-loadtest.bat" >nul
-copy /y "run-loadtest.ps1" "%DIST_FULL%\run-loadtest.ps1" >nul
+copy /y "tools\loadtest\run-loadtest.bat" "%DIST_FULL%\run-loadtest.bat" >nul
+copy /y "tools\loadtest\run-loadtest.ps1" "%DIST_FULL%\run-loadtest.ps1" >nul
 call :write_readme "%DIST_FULL%\使用说明.txt" "full"
 call :clean_runtime "%DIST_FULL%"
 

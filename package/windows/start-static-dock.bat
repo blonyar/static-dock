@@ -6,7 +6,9 @@ if not exist "%ROOT%" set "ROOT=%~dp0"
 if exist "%~dp0static-dock.exe" (
   "%~dp0static-dock.exe" --root "%ROOT%" --port 8787 --workers 128 --queue 2048 %*
 ) else (
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\windows\start-static-dock-fallback.ps1" -Port 8787 %*
+  echo [error] static-dock.exe was not found in this package.
+  pause
+  exit /b 1
 )
 echo.
 echo StaticDock ended. Press any key to close this window.
