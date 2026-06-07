@@ -1,6 +1,8 @@
 # StaticDock 静态资源码头
 
-![StaticDock 项目展示](assets/showcase.png)
+<p align="center">
+  <img src="assets/showcase.png" alt="StaticDock 项目展示" width="520">
+</p>
 
 StaticDock 是一个轻量、可随身携带的本地静态资源服务器。把一个文件夹挂成 HTTP 服务后，Android 真机、模拟器、同一局域网里的电脑或手机都可以直接访问其中的 JSON、图片、MP4 等资源。
 
