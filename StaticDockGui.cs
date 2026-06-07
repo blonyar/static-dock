@@ -35,8 +35,8 @@ public class StaticDockForm : Form
     bool loading;
     string lang = "zh";
 
-    Label titleLabel, subLabel, status, langLabel, rootLabel, portLabel, workersLabel, queueLabel, hint;
-    TextBox rootText, logBox;
+    Label titleLabel, subLabel, status, langLabel, rootLabel, portLabel, workersLabel, queueLabel, hint, addressLabel;
+    TextBox rootText, addressBox, logBox;
     NumericUpDown portBox, workersBox, queueBox;
     Button browseBtn, startBtn, stopBtn, openBtn, folderBtn, copyBtn, resetBtn, checkPortBtn;
     CheckBox autoStartBox, openAfterStartBox;
@@ -88,6 +88,7 @@ public class StaticDockForm : Form
             case "openAfterStart": return en ? "Open browser after start" : "启动后自动打开资源库";
             case "openFolder": return en ? "Open Folder" : "打开文件夹";
             case "checkPort": return en ? "Check Port" : "检测端口";
+            case "addresses": return en ? "Main addresses" : "常用访问地址";
             case "copy": return en ? "Copy URLs" : "复制地址";
             case "reset": return en ? "Reset" : "恢复默认";
             case "bootLog": return en ? "GUI is ready. Default mount is resources. The browser opens a resource manager page." : "GUI 已启动。默认挂载 resources 目录，打开后是资源管理页面。";
@@ -183,7 +184,7 @@ public class StaticDockForm : Form
         resetBtn = AddButton(662, 206); resetBtn.Click += delegate { ResetDefaults(true); };
         checkPortBtn = AddButton(784, 206); checkPortBtn.Click += delegate { CheckPort(); };
 
-        logBox = new TextBox { Left = 24, Top = 290, Width = 880, Height = 270, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };
+        logBox = new TextBox { Left = 24, Top = 382, Width = 880, Height = 178, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };
         Controls.Add(logBox);
 
         autoStartBox = new CheckBox { Left = 24, Top = 252, Width = 180, Height = 24 };
@@ -192,6 +193,11 @@ public class StaticDockForm : Form
         openAfterStartBox = new CheckBox { Left = 220, Top = 252, Width = 220, Height = 24 };
         openAfterStartBox.CheckedChanged += SettingChanged;
         Controls.Add(openAfterStartBox);
+
+        addressLabel = MakeLabel(24, 292, 160, 24);
+        addressLabel.Text = T("addresses");
+        addressBox = new TextBox { Left = 24, Top = 320, Width = 880, Height = 52, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.White, ForeColor = Color.FromArgb(15, 23, 42), Text = "-" };
+        Controls.Add(addressBox);
 
         restartTimer = new Timer();
         restartTimer.Interval = 900;
@@ -222,6 +228,7 @@ public class StaticDockForm : Form
         copyBtn.Text = T("copy");
         resetBtn.Text = T("reset");
         checkPortBtn.Text = T("checkPort");
+        addressLabel.Text = T("addresses");
         autoStartBox.Text = T("autostart");
         openAfterStartBox.Text = T("openAfterStart");
         hint.Text = IsRunning() ? T("hintRunning") : T("hintDefault");
@@ -375,6 +382,7 @@ public class StaticDockForm : Form
             System.Threading.Thread.Sleep(800);
             if (server.HasExited) throw new Exception(T("startFailedFast") + server.ExitCode);
             lastUrls = BuildUrls(actualPort, root); File.WriteAllText(Path.Combine(dir, "static-dock-urls.txt"), lastUrls, System.Text.Encoding.UTF8);
+            addressBox.Text = lastUrls;
             try { Clipboard.SetText(lastUrls); } catch { }
             SaveSettings();
             Log(T("launchSummary"));

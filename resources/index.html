@@ -12,10 +12,11 @@
     header .top { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
     header h1 { margin:0 0 8px; font-size:30px; }
     header p { margin:0; color:#dbeafe; }
-    select { border:0; border-radius:10px; padding:8px 10px; }
+    select,input { border:1px solid var(--line); border-radius:10px; padding:9px 10px; background:white; }
+    header select { border:0; }
     main { padding:24px 34px 40px; max-width:1180px; margin:auto; }
     .toolbar,.cards,.browser { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 8px 24px rgba(15,23,42,.06); }
-    .toolbar { padding:16px; display:grid; grid-template-columns:1fr auto auto; gap:10px; align-items:center; margin-bottom:18px; }
+    .toolbar { padding:16px; display:grid; grid-template-columns:1fr 180px 120px auto auto; gap:10px; align-items:center; margin-bottom:18px; }
     .path { font-family:Consolas,monospace; background:#f1f5f9; border:1px solid var(--line); border-radius:10px; padding:10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
     button,a.btn { border:0; border-radius:10px; background:var(--blue); color:white; padding:10px 13px; cursor:pointer; text-decoration:none; }
     button.secondary { background:#334155; }
@@ -49,6 +50,8 @@
 <main>
   <section class="toolbar">
     <div id="path" class="path">/</div>
+    <input id="search" placeholder="搜索文件名">
+    <select id="filter"><option value="all">全部类型</option><option value="dir">文件夹</option><option value="image">图片</option><option value="video">视频</option><option value="json">JSON</option><option value="file">文件</option></select>
     <button class="secondary" onclick="goUp()" data-i18n="up">上一级</button>
     <button onclick="loadList(currentPath)" data-i18n="refresh">刷新</button>
   </section>
@@ -67,17 +70,18 @@
 </main>
 <script>
 const dict={
- zh:{title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。',up:'上一级',refresh:'刷新',imagesTitle:'图片',imagesText:'封面、头像、轮播图。',openImages:'打开图片目录',videosTitle:'视频',videosText:'MP4/WebM，支持拖动进度。',openVideos:'打开视频目录',dataTitle:'数据',dataText:'Mock 数据、接口配置。',openData:'打开数据目录',androidTitle:'安卓',emulator:'模拟器地址',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件'},
- en:{title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and preview images, videos, and JSON. Default port: 8787.',up:'Up',refresh:'Refresh',imagesTitle:'Images',imagesText:'Covers, avatars, and carousel images.',openImages:'Open Images',videosTitle:'Videos',videosText:'MP4/WebM with seek support.',openVideos:'Open Videos',dataTitle:'Data',dataText:'Mock data and API configuration.',openData:'Open Data',androidTitle:'Android',emulator:'Emulator URL',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File'}
+ zh:{title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。',up:'上一级',refresh:'刷新',imagesTitle:'图片',imagesText:'封面、头像、轮播图。',openImages:'打开图片目录',videosTitle:'视频',videosText:'MP4/WebM，支持拖动进度。',openVideos:'打开视频目录',dataTitle:'数据',dataText:'Mock 数据、接口配置。',openData:'打开数据目录',androidTitle:'安卓',emulator:'模拟器地址',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名'},
+ en:{title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and preview images, videos, and JSON. Default port: 8787.',up:'Up',refresh:'Refresh',imagesTitle:'Images',imagesText:'Covers, avatars, and carousel images.',openImages:'Open Images',videosTitle:'Videos',videosText:'MP4/WebM with seek support.',openVideos:'Open Videos',dataTitle:'Data',dataText:'Mock data and API configuration.',openData:'Open Data',androidTitle:'Android',emulator:'Emulator URL',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name'}
 };
 let lang=new URLSearchParams(location.search).get('lang')||localStorage.getItem('staticdock.lang')||'zh';
 if(!dict[lang]) lang='zh';
-let currentPath='/';
-const langBox=document.getElementById('lang');
+let currentPath='/', currentEntries=[];
+const langBox=document.getElementById('lang'), search=document.getElementById('search'), filter=document.getElementById('filter');
 langBox.value=lang;
-langBox.onchange=()=>{lang=langBox.value;localStorage.setItem('staticdock.lang',lang);applyLang();loadList(currentPath);};
+langBox.onchange=()=>{lang=langBox.value;localStorage.setItem('staticdock.lang',lang);applyLang();renderEntries();};
+search.oninput=renderEntries; filter.onchange=renderEntries;
 function t(k){return dict[lang][k]||k;}
-function applyLang(){document.documentElement.lang=lang==='en'?'en':'zh-CN';document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.title=t('title');document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';}
+function applyLang(){document.documentElement.lang=lang==='en'?'en':'zh-CN';document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.title=t('title');document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';search.placeholder=t('search');filter.options[0].text=t('all');filter.options[1].text=t('dir');filter.options[2].text=t('image');filter.options[3].text=t('video');filter.options[4].text=t('json');filter.options[5].text=t('file');}
 function copyText(v){navigator.clipboard&&navigator.clipboard.writeText(v);}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
@@ -88,8 +92,13 @@ async function loadList(p){
  currentPath=p||'/';document.getElementById('path').textContent=currentPath;
  const grid=document.getElementById('grid');grid.innerHTML='<div class="note">'+t('loading')+'</div>';
  const res=await fetch('/__staticdock/api/list?path='+encodeURIComponent(currentPath));const data=await res.json();
- currentPath=data.path||currentPath;document.getElementById('path').textContent=currentPath;
- const entries=data.entries||[];document.getElementById('count').textContent=entries.length+(lang==='en'?t('items'):t('items'));
+ currentPath=data.path||currentPath;document.getElementById('path').textContent=currentPath;currentEntries=data.entries||[];renderEntries();
+}
+function renderEntries(){
+ const grid=document.getElementById('grid');let entries=currentEntries.slice();const q=search.value.trim().toLowerCase();const f=filter.value;
+ if(q)entries=entries.filter(e=>e.name.toLowerCase().includes(q));
+ if(f!=='all')entries=entries.filter(e=>e.kind===f||(f==='file'&&!['dir','image','video','json','html'].includes(e.kind)));
+ document.getElementById('count').textContent=entries.length+(lang==='en'?t('items'):t('items'));
  if(!entries.length){grid.innerHTML='<div class="note">'+t('empty')+'</div>';return;}
  grid.innerHTML=entries.map(e=>{const url=e.url;const th=e.kind==='image'?`<img src="${esc(url)}" loading="lazy">`:icon(e.kind);const open=e.kind==='dir'?`loadList('${esc(url)}');return false;`:'';return `<div class="item"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div><div class="actions"><a class="btn" href="${esc(url)}">${t('open')}</a><button onclick="copyText(location.origin+'${esc(url)}')">${t('copy')}</button></div></div></div>`;}).join('');
 }
