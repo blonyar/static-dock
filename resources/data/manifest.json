@@ -1,0 +1,16 @@
+{
+  "project": "StaticDock default resources",
+  "description": "默认资源目录清单。把你的图片、视频、JSON 放到 resources 对应子目录即可。",
+  "folders": {
+    "images": "图片、封面、头像、轮播图",
+    "videos": "MP4/WebM 视频，支持 Range 拖动",
+    "data": "JSON mock 数据和配置文件",
+    "docs": "说明文档或其他静态文件"
+  },
+  "samples": [
+    { "name": "项目展示图", "url": "/images/harbor-dashboard.svg", "type": "image" },
+    { "name": "手机预览图", "url": "/images/mobile-preview.svg", "type": "image" },
+    { "name": "数据卡片图", "url": "/images/data-card.svg", "type": "image" },
+    { "name": "示例记录", "url": "/data/sample-records.json", "type": "json" }
+  ]
+}

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 const COPY_BUFFER_SIZE: usize = 256 * 1024;
 const WORKER_STACK_SIZE: usize = 512 * 1024;
@@ -56,8 +56,10 @@ fn run() -> io::Result<()> {
 
     println!("Android emulator:  http://10.0.2.2:{selected_port}/");
     println!();
-    println!("Example JSON:      http://127.0.0.1:{selected_port}/loadtest/data/manifest.json");
-    println!("Example image:     http://127.0.0.1:{selected_port}/loadtest/images/test_image_01_1280x720.png");
+    println!("Resource manager:  http://127.0.0.1:{selected_port}/");
+    println!("Example JSON:      http://127.0.0.1:{selected_port}/data/manifest.json");
+    println!("Example image:     http://127.0.0.1:{selected_port}/images/harbor-dashboard.svg");
+    println!("Videos folder:     http://127.0.0.1:{selected_port}/videos/");
     println!();
     println!("Rust static server. No Node.js, Python, npm packages, or manual dependency install required.");
     println!("Keep this window open while using the server. Press Ctrl+C to stop.");
@@ -117,7 +119,7 @@ fn worker_loop(worker_id: usize, receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>
 
 fn parse_args() -> io::Result<Config> {
     let mut root: Option<PathBuf> = None;
-    let mut port = 8000u16;
+    let mut port = 8787u16;
     let mut workers = default_worker_count();
     let mut queue_size: Option<usize> = None;
     let mut args = env::args().skip(1);
@@ -225,11 +227,21 @@ fn default_worker_count() -> usize {
 fn print_help() {
     println!("Usage:");
     println!("  static-dock.exe [--root PATH] [--port PORT] [--workers N] [--queue N]");
-    println!("  static-dock.exe PATH -p 8000 --workers 128");
+    println!("  static-dock.exe PATH -p 8787 --workers 128");
 }
 
 fn bind_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
-    let candidates = [preferred_port, 8000, 8080, 8010, 8020, 3000, 5173, 9000];
+    let candidates = [
+        preferred_port,
+        8787,
+        8000,
+        8080,
+        8010,
+        8020,
+        3000,
+        5173,
+        9000,
+    ];
     let mut tried = HashSet::new();
 
     for port in candidates {
@@ -276,6 +288,16 @@ fn handle_client(mut stream: TcpStream, root: &Path) -> io::Result<()> {
             "text/plain; charset=utf-8",
             head_only,
         )?;
+        return Ok(());
+    }
+
+    if request.target.starts_with("/__staticdock/api/list") {
+        send_api_list(&mut stream, root, &request.target, head_only)?;
+        return Ok(());
+    }
+
+    if request.target.starts_with("/__staticdock/api/info") {
+        send_api_info(&mut stream, root, head_only)?;
         return Ok(());
     }
 
@@ -594,6 +616,181 @@ fn send_headers(
     }
     write!(stream, "\r\n")?;
     Ok(())
+}
+
+fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool) -> io::Result<()> {
+    let body = format!(
+        "{{\"name\":\"StaticDock\",\"root\":\"{}\"}}",
+        json_escape(&display_path(root))
+    );
+    send_text(
+        stream,
+        200,
+        "OK",
+        &body,
+        "application/json; charset=utf-8",
+        head_only,
+    )
+}
+
+fn send_api_list(
+    stream: &mut TcpStream,
+    root: &Path,
+    target: &str,
+    head_only: bool,
+) -> io::Result<()> {
+    let query_path = query_param(target, "path").unwrap_or_else(|| "/".to_string());
+    let request_path = if query_path.starts_with('/') {
+        query_path
+    } else {
+        format!("/{query_path}")
+    };
+
+    let path = match resolve_request_path(root, &request_path) {
+        Some(path) => path,
+        None => {
+            send_text(
+                stream,
+                403,
+                "Forbidden",
+                "{\"error\":\"forbidden\"}",
+                "application/json; charset=utf-8",
+                head_only,
+            )?;
+            return Ok(());
+        }
+    };
+
+    if !path.is_dir() {
+        send_text(
+            stream,
+            404,
+            "Not Found",
+            "{\"error\":\"not found\"}",
+            "application/json; charset=utf-8",
+            head_only,
+        )?;
+        return Ok(());
+    }
+
+    let mut entries = fs::read_dir(&path)?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        let a_is_file = a.file_type().map(|t| t.is_file()).unwrap_or(true);
+        let b_is_file = b.file_type().map(|t| t.is_file()).unwrap_or(true);
+        a_is_file
+            .cmp(&b_is_file)
+            .then_with(|| a.file_name().cmp(&b.file_name()))
+    });
+
+    let mut base = request_path.split('?').next().unwrap_or("/").to_string();
+    if !base.starts_with('/') {
+        base.insert(0, '/');
+    }
+    if !base.ends_with('/') {
+        base.push('/');
+    }
+
+    let mut body = String::new();
+    body.push_str("{\"path\":\"");
+    body.push_str(&json_escape(base.trim_end_matches('/')));
+    if base == "/" {
+        body.truncate(body.len() - 1);
+        body.push('/');
+    }
+    body.push_str("\",\"entries\":[");
+
+    let mut first = true;
+    for entry in entries {
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry.file_type().ok();
+        let is_dir = file_type.as_ref().map(|t| t.is_dir()).unwrap_or(false);
+        let metadata = entry.metadata().ok();
+        let bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = metadata
+            .and_then(|m| m.modified().ok())
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let href = if is_dir {
+            format!("{}{}{}", base, percent_encode(&file_name), "/")
+        } else {
+            format!("{}{}", base, percent_encode(&file_name))
+        };
+        let kind = entry_kind(&entry.path(), is_dir);
+        if !first {
+            body.push(',');
+        }
+        first = false;
+        body.push_str("{\"name\":\"");
+        body.push_str(&json_escape(&file_name));
+        body.push_str("\",\"url\":\"");
+        body.push_str(&json_escape(&href));
+        body.push_str("\",\"kind\":\"");
+        body.push_str(kind);
+        body.push_str("\",\"bytes\":");
+        body.push_str(&bytes.to_string());
+        body.push_str(",\"modified\":");
+        body.push_str(&modified.to_string());
+        body.push('}');
+    }
+
+    body.push_str("]}");
+    send_text(
+        stream,
+        200,
+        "OK",
+        &body,
+        "application/json; charset=utf-8",
+        head_only,
+    )
+}
+
+fn query_param(target: &str, name: &str) -> Option<String> {
+    let query = target.split_once('?')?.1;
+    for part in query.split('&') {
+        let (key, value) = part.split_once('=').unwrap_or((part, ""));
+        if percent_decode(key) == name {
+            return Some(percent_decode(value));
+        }
+    }
+    None
+}
+
+fn entry_kind(path: &Path, is_dir: bool) -> &'static str {
+    if is_dir {
+        return "dir";
+    }
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "image",
+        "mp4" | "webm" | "mov" | "m4v" => "video",
+        "json" => "json",
+        "html" | "htm" => "html",
+        _ => "file",
+    }
+}
+
+fn json_escape(input: &str) -> String {
+    let mut output = String::new();
+    for ch in input.chars() {
+        match ch {
+            '\\' => output.push_str("\\\\"),
+            '"' => output.push_str("\\\""),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            ch if ch.is_control() => output.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => output.push(ch),
+        }
+    }
+    output
 }
 
 fn directory_listing(path: &Path, target: &str) -> io::Result<String> {

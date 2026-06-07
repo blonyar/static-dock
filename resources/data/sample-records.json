@@ -1,0 +1,5 @@
+[
+  { "id": 1, "title": "Android 课程练习", "cover": "/images/mobile-preview.svg", "category": "lesson" },
+  { "id": 2, "title": "静态资源服务演示", "cover": "/images/harbor-dashboard.svg", "category": "demo" },
+  { "id": 3, "title": "JSON Mock 数据", "cover": "/images/data-card.svg", "category": "mock" }
+]

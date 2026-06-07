@@ -1,5 +1,7 @@
 # StaticDock 静态资源码头
 
+![StaticDock 项目展示](assets/showcase.png)
+
 StaticDock 是一个轻量、可随身携带的本地静态资源服务器。把一个文件夹挂成 HTTP 服务后，Android 真机、模拟器、同一局域网里的电脑或手机都可以直接访问其中的 JSON、图片、MP4 等资源。
 
 适合这些场景：
@@ -22,11 +24,45 @@ StaticDock 是一个轻量、可随身携带的本地静态资源服务器。把
 
 ## 快速开始
 
-普通用户建议从 GitHub Releases 下载 `static-dock-windows-x64.zip`，解压后双击：
+普通用户建议从 GitHub Releases 下载 `static-dock-windows-x64.zip`，解压后只需要双击：
 
 ```text
 start-static-dock-gui.bat
 ```
+
+它会打开原生图形界面 `StaticDockGui.exe`。默认挂载：
+
+```text
+resources/
+```
+
+打开服务后，默认访问的是资源管理页：
+
+```text
+http://127.0.0.1:8787/
+```
+
+把你的资源放进这些目录即可：
+
+```text
+resources/images/   图片、封面、头像、轮播图
+resources/videos/   MP4/WebM 视频
+resources/data/     JSON mock 数据
+resources/docs/     文档或其他静态文件
+```
+
+GUI 支持：
+
+- 选择挂载目录
+- 修改端口、workers 和 queue
+- 默认端口 `8787`，比 `8000/8080` 更不容易冲突
+- 记住上次使用的目录和端口，配置保存在 `%APPDATA%\StaticDock\settings.ini`
+- 修改目录/端口时，如果服务正在运行，会自动重启生效
+- 一键恢复默认设置
+- 启动/停止服务
+- 打开资源管理页
+- 复制手机/模拟器/局域网访问地址
+- 显示运行状态和服务日志
 
 如果只想用命令行窗口直接启动，双击：
 
@@ -34,48 +70,20 @@ start-static-dock-gui.bat
 start-static-dock.bat
 ```
 
-下载或克隆仓库后，在 Windows 上双击：
-
-```text
-start-static-dock.bat
-```
-
-它会默认挂载当前目录，并打印访问地址：
-
-```text
-PC local:          http://127.0.0.1:8000/
-Phone/LAN URLs:   http://你的电脑IP:8000/
-Android emulator: http://10.0.2.2:8000/
-```
-
-如果想选择目录、端口和并发参数，双击：
-
-```text
-start-static-dock-gui.bat
-```
-
-GUI 支持：
-
-- 选择挂载目录
-- 修改端口
-- 修改 workers
-- 修改 queue
-- 启动/停止服务
-- 打开本机地址
-- 复制手机/模拟器访问地址
+它也会默认挂载 `resources/`，并使用端口 `8787`。
 
 ## Android 访问
 
 真机和电脑在同一个 Wi-Fi 或手机连电脑热点时，使用电脑的局域网 IP：
 
 ```text
-http://192.168.x.x:8000/loadtest/data/manifest.json
+http://192.168.x.x:8787/data/manifest.json
 ```
 
 Android 模拟器使用：
 
 ```text
-http://10.0.2.2:8000/loadtest/data/manifest.json
+http://10.0.2.2:8787/data/manifest.json
 ```
 
 Android 需要网络权限：
@@ -94,14 +102,14 @@ Android 需要网络权限：
 ## 命令行用法
 
 ```powershell
-.\static-dock.exe --root "D:\android-data" --port 8000 --workers 128 --queue 2048
+.\static-dock.exe --root "D:\android-data" --port 8787 --workers 128 --queue 2048
 ```
 
 参数：
 
 ```text
 --root PATH       要挂载的目录，默认是 exe 所在目录
---port PORT       监听端口，默认 8000；占用时会自动尝试备用端口
+--port PORT       监听端口，默认 8787；占用时会自动尝试备用端口
 --workers N       工作线程数，默认按 CPU 自动取 64-128
 --queue N         请求队列长度，默认至少 256
 ```

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StaticDock</title>
+  <style>
+    :root { --blue:#1e40af; --cyan:#06b6d4; --bg:#f5f7fb; --card:#fff; --text:#111827; --muted:#64748b; --line:#dbe3ef; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:28px 34px; background:linear-gradient(135deg,#1e40af,#2563eb 55%,#06b6d4); color:white; }
+    header .top { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+    header h1 { margin:0 0 8px; font-size:30px; }
+    header p { margin:0; color:#dbeafe; }
+    select { border:0; border-radius:10px; padding:8px 10px; }
+    main { padding:24px 34px 40px; max-width:1180px; margin:auto; }
+    .toolbar,.cards,.browser { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 8px 24px rgba(15,23,42,.06); }
+    .toolbar { padding:16px; display:grid; grid-template-columns:1fr auto auto; gap:10px; align-items:center; margin-bottom:18px; }
+    .path { font-family:Consolas,monospace; background:#f1f5f9; border:1px solid var(--line); border-radius:10px; padding:10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    button,a.btn { border:0; border-radius:10px; background:var(--blue); color:white; padding:10px 13px; cursor:pointer; text-decoration:none; }
+    button.secondary { background:#334155; }
+    .cards { padding:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-bottom:18px; }
+    .card { border:1px solid var(--line); border-radius:14px; padding:14px; background:#fff; }
+    .card h2 { margin:0 0 8px; font-size:17px; }
+    .card p { margin:0 0 12px; color:var(--muted); line-height:1.55; }
+    .browser { overflow:hidden; }
+    .browser-head { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+    .browser-head h2 { margin:0; font-size:18px; }
+    .grid { padding:16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:14px; }
+    .item { border:1px solid var(--line); border-radius:14px; background:white; overflow:hidden; min-height:160px; display:flex; flex-direction:column; }
+    .thumb { height:120px; background:#e2e8f0; display:flex; align-items:center; justify-content:center; color:#475569; font-size:38px; }
+    .thumb img { width:100%; height:100%; object-fit:cover; }
+    .meta { padding:11px; }
+    .name { font-weight:700; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .sub { color:var(--muted); font-size:12px; margin-top:5px; }
+    .actions { display:flex; gap:8px; margin-top:10px; }
+    .actions a,.actions button { font-size:12px; padding:7px 9px; }
+    code { background:#e2e8f0; padding:2px 6px; border-radius:6px; }
+    .note { color:var(--muted); line-height:1.7; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div><h1 data-i18n="title">StaticDock 资源管理台</h1><p data-i18n="subtitle">浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。</p></div>
+    <select id="lang"><option value="zh">中文</option><option value="en">English</option></select>
+  </div>
+</header>
+<main>
+  <section class="toolbar">
+    <div id="path" class="path">/</div>
+    <button class="secondary" onclick="goUp()" data-i18n="up">上一级</button>
+    <button onclick="loadList(currentPath)" data-i18n="refresh">刷新</button>
+  </section>
+
+  <section class="cards">
+    <div class="card"><h2 data-i18n="imagesTitle">图片</h2><p data-i18n="imagesText">封面、头像、轮播图。</p><a class="btn" href="#" onclick="loadList('/images');return false;" data-i18n="openImages">打开图片目录</a></div>
+    <div class="card"><h2 data-i18n="videosTitle">视频</h2><p data-i18n="videosText">MP4/WebM，支持拖动进度。</p><a class="btn" href="#" onclick="loadList('/videos');return false;" data-i18n="openVideos">打开视频目录</a></div>
+    <div class="card"><h2 data-i18n="dataTitle">数据</h2><p data-i18n="dataText">Mock 数据、接口配置。</p><a class="btn" href="#" onclick="loadList('/data');return false;" data-i18n="openData">打开数据目录</a></div>
+    <div class="card"><h2 data-i18n="androidTitle">安卓</h2><p><span data-i18n="emulator">模拟器地址</span>：<code id="emu"></code></p><button onclick="copyText(location.origin + '/')" data-i18n="copyLocal">复制本机地址</button></div>
+  </section>
+
+  <section class="browser">
+    <div class="browser-head"><h2 data-i18n="browser">文件浏览</h2><span class="note" id="count">加载中...</span></div>
+    <div class="grid" id="grid"></div>
+  </section>
+</main>
+<script>
+const dict={
+ zh:{title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。',up:'上一级',refresh:'刷新',imagesTitle:'图片',imagesText:'封面、头像、轮播图。',openImages:'打开图片目录',videosTitle:'视频',videosText:'MP4/WebM，支持拖动进度。',openVideos:'打开视频目录',dataTitle:'数据',dataText:'Mock 数据、接口配置。',openData:'打开数据目录',androidTitle:'安卓',emulator:'模拟器地址',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件'},
+ en:{title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and preview images, videos, and JSON. Default port: 8787.',up:'Up',refresh:'Refresh',imagesTitle:'Images',imagesText:'Covers, avatars, and carousel images.',openImages:'Open Images',videosTitle:'Videos',videosText:'MP4/WebM with seek support.',openVideos:'Open Videos',dataTitle:'Data',dataText:'Mock data and API configuration.',openData:'Open Data',androidTitle:'Android',emulator:'Emulator URL',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File'}
+};
+let lang=new URLSearchParams(location.search).get('lang')||localStorage.getItem('staticdock.lang')||'zh';
+if(!dict[lang]) lang='zh';
+let currentPath='/';
+const langBox=document.getElementById('lang');
+langBox.value=lang;
+langBox.onchange=()=>{lang=langBox.value;localStorage.setItem('staticdock.lang',lang);applyLang();loadList(currentPath);};
+function t(k){return dict[lang][k]||k;}
+function applyLang(){document.documentElement.lang=lang==='en'?'en':'zh-CN';document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.title=t('title');document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';}
+function copyText(v){navigator.clipboard&&navigator.clipboard.writeText(v);}
+function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
+function icon(k){return k==='dir'?'📁':k==='image'?'🖼️':k==='video'?'🎬':k==='json'?'{}':'📄';}
+function kindName(k){return t(k)||k;}
+function goUp(){if(currentPath==='/')return;const p=currentPath.replace(/\/$/,'').split('/');p.pop();loadList(p.join('/')||'/');}
+async function loadList(p){
+ currentPath=p||'/';document.getElementById('path').textContent=currentPath;
+ const grid=document.getElementById('grid');grid.innerHTML='<div class="note">'+t('loading')+'</div>';
+ const res=await fetch('/__staticdock/api/list?path='+encodeURIComponent(currentPath));const data=await res.json();
+ currentPath=data.path||currentPath;document.getElementById('path').textContent=currentPath;
+ const entries=data.entries||[];document.getElementById('count').textContent=entries.length+(lang==='en'?t('items'):t('items'));
+ if(!entries.length){grid.innerHTML='<div class="note">'+t('empty')+'</div>';return;}
+ grid.innerHTML=entries.map(e=>{const url=e.url;const th=e.kind==='image'?`<img src="${esc(url)}" loading="lazy">`:icon(e.kind);const open=e.kind==='dir'?`loadList('${esc(url)}');return false;`:'';return `<div class="item"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div><div class="actions"><a class="btn" href="${esc(url)}">${t('open')}</a><button onclick="copyText(location.origin+'${esc(url)}')">${t('copy')}</button></div></div></div>`;}).join('');
+}
+applyLang();loadList('/');
+</script>
+</body>
+</html>

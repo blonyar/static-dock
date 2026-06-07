@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#1e40af"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs>
+  <rect width="960" height="540" fill="#eff6ff"/>
+  <rect x="70" y="70" width="820" height="400" rx="34" fill="url(#g)"/>
+  <circle cx="780" cy="130" r="56" fill="#bfdbfe" opacity=".9"/>
+  <rect x="130" y="150" width="360" height="46" rx="10" fill="white" opacity=".95"/>
+  <rect x="130" y="220" width="620" height="34" rx="9" fill="#dbeafe" opacity=".95"/>
+  <rect x="130" y="278" width="520" height="34" rx="9" fill="#dbeafe" opacity=".75"/>
+  <rect x="130" y="348" width="180" height="54" rx="14" fill="#22c55e"/>
+  <text x="130" y="125" font-family="Segoe UI,Arial" font-size="42" font-weight="700" fill="white">StaticDock</text>
+  <text x="150" y="385" font-family="Segoe UI,Arial" font-size="24" font-weight="700" fill="white">Resource Server</text>
+  <path d="M650 365h130l-28 42H622z" fill="#0f172a" opacity=".3"/>
+  <path d="M690 260v105" stroke="white" stroke-width="16" stroke-linecap="round"/>
+  <path d="M650 305h90" stroke="white" stroke-width="16" stroke-linecap="round"/>
+</svg>
