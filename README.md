@@ -177,10 +177,9 @@ loadtest/videos/
 
 ```powershell
 cargo build --release
-copy target\release\static-dock.exe static-dock.exe
 ```
 
-也可以双击：
+Windows 打包产物可通过一键脚本生成到 `build/windows/` 和 `dist/`，不会在仓库根目录生成 exe：
 
 ```text
 build-windows.bat
@@ -188,7 +187,7 @@ build-windows.bat
 
 ## Release 打包
 
-本项目提供一键发布脚本，会更新版本号、构建 Windows 包、运行 release 检查、提交、打 tag、推送并创建 GitHub Release：
+本项目提供一键发布脚本，会更新版本号、构建 Windows 包、运行 release 检查、提交、打 tag、推送并创建 GitHub Release。Release notes 默认优先读取 `CHANGELOG.md` 中对应版本，也可通过 `-NotesFile` 指定：
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/release/release.ps1 -Version v0.2.5

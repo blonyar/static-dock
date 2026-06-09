@@ -48,10 +48,11 @@ build-windows.bat
 
 Local Windows release build entrypoint:
 
-1. Build Rust release binary.
-2. Build WinForms GUI with .NET Framework `csc.exe`.
-3. Create standard and loadtest distribution folders.
-4. Generate zip packages.
+1. Build Rust release binary into `target/release/`.
+2. Copy build executables into `build/windows/`.
+3. Build WinForms GUI with .NET Framework `csc.exe` into `build/windows/`.
+4. Create standard and loadtest distribution folders.
+5. Generate zip packages.
 
 ```text
 scripts/release/
@@ -76,8 +77,7 @@ Loadtest data set used by the full release package.
 These are intentionally ignored and should not be committed:
 
 ```text
-static-dock.exe
-StaticDockGui.exe
+build/windows/
 static-dock-urls.txt
 static-dock-server.pid
 dist/

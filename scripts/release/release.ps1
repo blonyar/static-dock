@@ -4,6 +4,7 @@ param(
     [string]$Version,
 
     [string]$Title = "StaticDock $Version",
+    [string]$NotesFile,
     [switch]$SkipPush,
     [switch]$Draft,
     [switch]$Prerelease
@@ -38,37 +39,50 @@ function Set-CargoVersion {
     Set-Content -LiteralPath $cargo -Value $updated -NoNewline -Encoding UTF8
 }
 
-function Write-ReleaseNotes {
+function Get-ChangelogSection {
     param([string]$Version)
+    $changelog = "CHANGELOG.md"
+    if (-not (Test-Path -LiteralPath $changelog)) { return $null }
+
+    $text = Get-Content -LiteralPath $changelog -Raw
+    $plain = [regex]::Escape($Version.TrimStart('v'))
+    $tag = [regex]::Escape($Version)
+    $pattern = "(?ms)^##\s+(?:$tag|$plain)\s*\r?\n(?<body>.*?)(?=^##\s+|\z)"
+    $match = [regex]::Match($text, $pattern)
+    if (-not $match.Success) { return $null }
+
+    $body = $match.Groups['body'].Value.Trim()
+    if (-not $body) { return $null }
+    return "# StaticDock $Version`r`n`r`n$body`r`n"
+}
+
+function Write-ReleaseNotes {
+    param(
+        [string]$Version,
+        [string]$NotesFile
+    )
+    if (-not (Test-Path -LiteralPath "dist")) {
+        New-Item -ItemType Directory -Path "dist" | Out-Null
+    }
+
     $path = Join-Path "dist" "release-notes-$Version.md"
+
+    if ($NotesFile) {
+        if (-not (Test-Path -LiteralPath $NotesFile)) { throw "Notes file not found: $NotesFile" }
+        Copy-Item -LiteralPath $NotesFile -Destination $path -Force
+        return $path
+    }
+
+    $changelogNotes = Get-ChangelogSection $Version
+    if ($changelogNotes) {
+        Set-Content -LiteralPath $path -Value $changelogNotes -Encoding UTF8
+        return $path
+    }
+
     $body = @"
 # StaticDock $Version
 
-## Highlights
-
-- 更准确的局域网地址识别：过滤 198.18.x.x / 198.19.x.x 等虚拟或测试网段，优先显示真实 LAN 地址。
-- GUI 增加最近使用目录下拉记忆，常用资源目录可以快速切换。
-- 保留原生 C# WinForms GUI、默认 resources/、默认端口 8787、资源管理台和 Windows 免依赖体验。
-- 新增一键 release 脚本，后续版本构建、测试、提交、打 tag、创建 GitHub Release 更稳定。
-
-## Packages
-
-- static-dock-windows-x64.zip：普通用户推荐下载，体积更小。
-- static-dock-windows-x64-with-loadtest.zip：包含 loadtest 压测素材和脚本。
-
-## Quick start
-
-解压后双击：
-
-```text
-start-static-dock-gui.bat
-```
-
-默认访问：
-
-```text
-http://127.0.0.1:8787/
-```
+See CHANGELOG.md for release details.
 "@
     Set-Content -LiteralPath $path -Value $body -Encoding UTF8
     return $path
@@ -81,10 +95,10 @@ Run-Step "Update Cargo.lock" { cargo check }
 Run-Step "Build Windows packages" { & "$RepoRoot/build-windows.bat" }
 Run-Step "Run release package checks" { & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$RepoRoot/scripts/release/test-release.ps1" }
 $notes = $null
-Run-Step "Write release notes" { $script:notes = Write-ReleaseNotes $Version; Write-Host $script:notes }
+Run-Step "Write release notes" { $script:notes = Write-ReleaseNotes $Version $NotesFile; Write-Host $script:notes }
 
 Run-Step "Commit and tag" {
-    git add Cargo.toml Cargo.lock src/main.rs gui/StaticDockGui.cs resources/index.html build-windows.bat README.md .gitignore docs scripts package tools
+    git add Cargo.toml Cargo.lock src/main.rs gui/StaticDockGui.cs resources/index.html build-windows.bat README.md CHANGELOG.md .gitignore .github docs scripts package tools
     git commit -m "Release $Version"
     git tag -a $Version -m "Release $Version"
 }

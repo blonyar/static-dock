@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Windows release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Windows packages
+        shell: cmd
+        run: build-windows.bat
+
+      - name: Run release checks
+        shell: pwsh
+        run: ./scripts/release/test-release.ps1
+
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @(
+            'dist/static-dock-windows-x64.zip',
+            'dist/static-dock-windows-x64-with-loadtest.zip'
+          )
+          $lines = foreach ($package in $packages) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path -Leaf $package)"
+          }
+          $lines | Set-Content -LiteralPath 'dist/SHA256SUMS.txt' -Encoding ascii
+          Get-Content -LiteralPath 'dist/SHA256SUMS.txt'
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ github.ref_name }}'
+          $text = Get-Content -LiteralPath 'CHANGELOG.md' -Raw
+          $plain = [regex]::Escape($version.TrimStart('v'))
+          $tag = [regex]::Escape($version)
+          $pattern = "(?ms)^##\s+(?:$tag|$plain)\s*\r?\n(?<body>.*?)(?=^##\s+|\z)"
+          $match = [regex]::Match($text, $pattern)
+          if (-not $match.Success) { throw "CHANGELOG.md does not contain notes for $version" }
+          "# StaticDock $version`r`n`r`n$($match.Groups['body'].Value.Trim())`r`n" |
+            Set-Content -LiteralPath "dist/release-notes-$version.md" -Encoding UTF8
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: StaticDock ${{ github.ref_name }}
+          body_path: dist/release-notes-${{ github.ref_name }}.md
+          files: |
+            dist/static-dock-windows-x64.zip
+            dist/static-dock-windows-x64-with-loadtest.zip
+            dist/SHA256SUMS.txt

@@ -21,6 +21,11 @@ function Assert-Missing {
     Write-Host "[ok] absent $Path"
 }
 
+Assert-Missing "static-dock.exe"
+Assert-Missing "StaticDockGui.exe"
+Assert-Exists "build/windows/static-dock.exe"
+Assert-Exists "build/windows/StaticDockGui.exe"
+
 Assert-Exists $Dist
 Assert-Exists $FullDist
 Assert-Exists "$Dist/static-dock.exe"

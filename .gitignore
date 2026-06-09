@@ -1,5 +1,6 @@
 /target/
 /dist/
+/build/
 /static-dock.exe
 /StaticDockGui.exe
 /static-dock-urls.txt

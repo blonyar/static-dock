@@ -2,6 +2,9 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
+set "BUILD=build\windows"
+set "SERVER_EXE=%BUILD%\static-dock.exe"
+set "GUI_EXE=%BUILD%\StaticDockGui.exe"
 set "DIST=dist\static-dock-windows-x64"
 set "DIST_FULL=dist\static-dock-windows-x64-with-loadtest"
 set "ZIP=dist\static-dock-windows-x64.zip"
@@ -14,10 +17,14 @@ echo  Building StaticDock Windows packages
 echo ========================================
 echo.
 
+rem Remove legacy root-level build outputs from older builds.
+del /q "static-dock.exe" "StaticDockGui.exe" 2>nul
+
 echo [1/6] Building Rust server...
+if not exist "%BUILD%" mkdir "%BUILD%"
 cargo build --release
 if errorlevel 1 exit /b %errorlevel%
-copy /y "target\release\static-dock.exe" "static-dock.exe" >nul
+copy /y "target\release\static-dock.exe" "%SERVER_EXE%" >nul
 
 echo [2/6] Building native Windows GUI...
 if not exist "%CSC%" (
@@ -25,15 +32,15 @@ if not exist "%CSC%" (
     echo %CSC%
     exit /b 1
 )
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%CSC%' /target:winexe /win32icon:'%ICON%' /out:StaticDockGui.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll gui\StaticDockGui.cs"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%CSC%' /target:winexe /win32icon:'%ICON%' /out:'%GUI_EXE%' /reference:System.Windows.Forms.dll /reference:System.Drawing.dll gui\StaticDockGui.cs"
 if errorlevel 1 exit /b %errorlevel%
 
 echo [3/6] Refreshing standard dist folder...
 if exist "%DIST%" rmdir /s /q "%DIST%"
 mkdir "%DIST%"
 
-copy /y "static-dock.exe" "%DIST%\static-dock.exe" >nul
-copy /y "StaticDockGui.exe" "%DIST%\StaticDockGui.exe" >nul
+copy /y "%SERVER_EXE%" "%DIST%\static-dock.exe" >nul
+copy /y "%GUI_EXE%" "%DIST%\StaticDockGui.exe" >nul
 copy /y "package\windows\start-static-dock-gui.bat" "%DIST%\start-static-dock-gui.bat" >nul
 copy /y "package\windows\start-static-dock.bat" "%DIST%\start-static-dock.bat" >nul
 copy /y "package\windows\stop-static-dock.bat" "%DIST%\stop-static-dock.bat" >nul
@@ -60,6 +67,7 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo [6/6] Done.
 echo.
+echo Build folder:    "%BUILD%"
 echo Standard folder: "%DIST%"
 echo Standard zip:    "%ZIP%"
 echo Full folder:     "%DIST_FULL%"
