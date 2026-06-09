@@ -25,6 +25,7 @@ function Assert-CleanOrOnlyVersionWork {
     if (-not $status) { return }
     Write-Host "Current working tree has changes:" -ForegroundColor Yellow
     $status | ForEach-Object { Write-Host "  $_" }
+    throw "Release requires a clean working tree. Commit or stash changes first."
 }
 
 function Set-CargoVersion {
@@ -76,13 +77,14 @@ http://127.0.0.1:8787/
 Assert-CleanOrOnlyVersionWork
 
 Run-Step "Update Cargo.toml version to $Version" { Set-CargoVersion $Version }
+Run-Step "Update Cargo.lock" { cargo check }
 Run-Step "Build Windows packages" { & "$RepoRoot/build-windows.bat" }
 Run-Step "Run release package checks" { & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$RepoRoot/scripts/release/test-release.ps1" }
 $notes = $null
 Run-Step "Write release notes" { $script:notes = Write-ReleaseNotes $Version; Write-Host $script:notes }
 
 Run-Step "Commit and tag" {
-    git add Cargo.toml src/main.rs gui/StaticDockGui.cs build-windows.bat README.md scripts/release/release.ps1 dist/static-dock-windows-x64.zip dist/static-dock-windows-x64-with-loadtest.zip static-dock.exe StaticDockGui.exe
+    git add Cargo.toml Cargo.lock src/main.rs gui/StaticDockGui.cs resources/index.html build-windows.bat README.md .gitignore docs scripts package tools
     git commit -m "Release $Version"
     git tag -a $Version -m "Release $Version"
 }

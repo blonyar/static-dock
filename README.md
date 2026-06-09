@@ -76,6 +76,22 @@ start-static-dock.bat
 
 它也会默认挂载 `resources/`，并使用端口 `8787`。
 
+## 项目结构
+
+```text
+src/                 Rust 静态资源服务器源码
+gui/                 C# WinForms GUI 源码
+resources/           默认资源目录和浏览器资源管理台
+package/windows/     Windows 发布包启动脚本来源
+scripts/release/     release 自动化和包检查脚本
+scripts/windows/     Windows fallback 脚本
+tools/loadtest/      压测工具脚本
+loadtest/            压测素材
+docs/                架构和维护文档
+```
+
+更详细的架构说明见：[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+
 ## Android / 模拟器访问示例
 
 真机和电脑在同一个 Wi-Fi 或手机连电脑热点时，使用电脑的局域网 IP：

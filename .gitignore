@@ -1,5 +1,13 @@
 /target/
 /dist/
+/static-dock.exe
+/StaticDockGui.exe
+/static-dock-urls.txt
+/static-dock-server.pid
+/static-dock-gui-error.log
+/start-static-dock-gui.bat
+/start-static-dock.bat
+/stop-static-dock.bat
 *.pdb
 *.log
 *.tmp
