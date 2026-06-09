@@ -59,7 +59,8 @@ GUI 支持：
 - 选择挂载目录
 - 修改端口、workers 和 queue
 - 默认端口 `8787`，比 `8000/8080` 更不容易冲突
-- 记住上次使用的目录和端口，配置保存在 `%APPDATA%\StaticDock\settings.ini`
+- 记住上次使用的目录、端口和最近使用目录下拉列表，配置保存在 `%APPDATA%\StaticDock\settings.ini`
+- 自动过滤 `198.18.x.x` 等虚拟/测试网段，优先显示真实局域网地址
 - 修改目录/端口时，如果服务正在运行，会自动重启生效
 - 一键恢复默认设置
 - 启动/停止服务
@@ -167,6 +168,21 @@ copy target\release\static-dock.exe static-dock.exe
 
 ```text
 build-windows.bat
+```
+
+## Release 打包
+
+本项目提供一键发布脚本，会更新版本号、构建 Windows 包、运行 release 检查、提交、打 tag、推送并创建 GitHub Release：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/release/release.ps1 -Version v0.2.5
+```
+
+如只想本地演练构建和提交前检查，可先运行：
+
+```powershell
+.\build-windows.bat
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/release/test-release.ps1
 ```
 
 ## 注意

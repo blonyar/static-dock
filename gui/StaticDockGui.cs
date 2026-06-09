@@ -43,7 +43,8 @@ public class StaticDockForm : Form
 
     Label titleLabel, subLabel, statusLabel, langLabel, rootLabel, portLabel, workersLabel, queueLabel, hintLabel, addressLabel;
     Label localTitle, lanTitle, emulatorTitle, advancedTitle;
-    TextBox rootText, localText, lanText, emulatorText, logBox;
+    ComboBox rootText;
+    TextBox localText, lanText, emulatorText, logBox;
     NumericUpDown portBox, workersBox, queueBox;
     Button browseBtn, openFolderBtn, startBtn, stopBtn, checkPortBtn, resetBtn, advancedBtn;
     Button openLocalBtn, copyLocalBtn, copyLanBtn, copyEmulatorBtn, copyAllBtn;
@@ -57,8 +58,8 @@ public class StaticDockForm : Form
         dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         exe = Path.Combine(dir, "static-dock.exe");
         iconFile = Path.Combine(dir, "assets\\icon.png");
-        pidFile = Path.Combine(dir, "static-dock-server.pid");
         settingsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StaticDock");
+        pidFile = Path.Combine(settingsDir, "static-dock-server.pid");
         settingsFile = Path.Combine(settingsDir, "settings.ini");
         BuildUi();
         LoadSettings();
@@ -158,8 +159,9 @@ public class StaticDockForm : Form
 
         var rootPanel = Card(24, 112, 930, 92);
         rootLabel = MakeLabel(rootPanel, 16, 14, 110, 24);
-        rootText = new TextBox { Left = 16, Top = 42, Width = 650, Height = 26, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        rootText = new ComboBox { Left = 16, Top = 42, Width = 650, Height = 26, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, DropDownStyle = ComboBoxStyle.DropDown };
         rootText.TextChanged += SettingChanged;
+        rootText.SelectedIndexChanged += SettingChanged;
         rootPanel.Controls.Add(rootText);
         browseBtn = new Button { Left = 682, Top = 39, Width = 110, Height = 32, Anchor = AnchorStyles.Top | AnchorStyles.Right };
         browseBtn.Click += delegate { BrowseRoot(); };
@@ -235,6 +237,32 @@ public class StaticDockForm : Form
     void Log(string s) { if (logBox != null) logBox.AppendText(s + Environment.NewLine); }
     bool IsRunning() { return server != null && !server.HasExited; }
 
+    void AddRecentRoot(string root)
+    {
+        if (String.IsNullOrWhiteSpace(root)) return;
+        root = root.Trim();
+        for (int i = rootText.Items.Count - 1; i >= 0; i--)
+            if (String.Equals(rootText.Items[i].ToString(), root, StringComparison.OrdinalIgnoreCase)) rootText.Items.RemoveAt(i);
+        rootText.Items.Insert(0, root);
+        while (rootText.Items.Count > 8) rootText.Items.RemoveAt(rootText.Items.Count - 1);
+    }
+
+    string RecentRootsLine()
+    {
+        var values = new List<string>();
+        foreach (object item in rootText.Items) values.Add(item.ToString().Replace("|", ""));
+        return String.Join("|", values.ToArray());
+    }
+
+    void LoadRecentRoots(string text)
+    {
+        foreach (string item in text.Split('|'))
+        {
+            string root = item.Trim();
+            if (Directory.Exists(root)) AddRecentRoot(root);
+        }
+    }
+
     void ApplyLanguage()
     {
         Text = T("title"); titleLabel.Text = T("title"); subLabel.Text = T("subtitle"); langLabel.Text = T("language");
@@ -270,14 +298,31 @@ public class StaticDockForm : Form
         localUrl = "http://127.0.0.1:" + port + "/?lang=" + lang;
         emulatorUrl = "http://10.0.2.2:" + port + "/?lang=" + lang;
         lanUrl = FirstLanUrl(port);
-        if (IsRunning()) { localText.Text = localUrl; lanText.Text = String.IsNullOrEmpty(lanUrl) ? "-" : lanUrl; emulatorText.Text = emulatorUrl; }
+        if (IsRunning()) { localText.Text = localUrl; lanText.Text = String.IsNullOrEmpty(lanUrl) ? "-" : lanUrl; emulatorText.Text = emulatorUrl; lastUrls = BuildUrls(port, rootText.Text); }
     }
 
     string FirstLanUrl(int port)
     {
+        IPAddress fallback = null;
         foreach (var ip in Dns.GetHostAddresses(Dns.GetHostName()))
-            if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip)) return "http://" + ip + ":" + port + "/?lang=" + lang;
-        return "";
+        {
+            if (ip.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(ip) || IsSpecialIpv4(ip)) continue;
+            if (IsPrivateLanIpv4(ip)) return "http://" + ip + ":" + port + "/?lang=" + lang;
+            if (fallback == null) fallback = ip;
+        }
+        return fallback == null ? "" : "http://" + fallback + ":" + port + "/?lang=" + lang;
+    }
+
+    bool IsPrivateLanIpv4(IPAddress ip)
+    {
+        byte[] b = ip.GetAddressBytes();
+        return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+    }
+
+    bool IsSpecialIpv4(IPAddress ip)
+    {
+        byte[] b = ip.GetAddressBytes();
+        return b[0] == 0 || b[0] == 127 || (b[0] == 169 && b[1] == 254) || (b[0] == 198 && (b[1] == 18 || b[1] == 19)) || b[0] >= 224;
     }
 
     void TryLoadWindowIcon()
@@ -303,13 +348,13 @@ public class StaticDockForm : Form
     void CheckPort()
     {
         int port = (int)portBox.Value;
-        try { TcpListener listener = new TcpListener(IPAddress.Loopback, port); listener.Start(); listener.Stop(); Log(T("portFree") + port); }
+        try { TcpListener listener = new TcpListener(IPAddress.Any, port); listener.Start(); listener.Stop(); Log(T("portFree") + port); }
         catch { Log(T("portBusy") + port); }
     }
 
     void BrowseRoot()
     {
-        using (var d = new FolderBrowserDialog()) { d.Description = T("chooseFolder"); d.SelectedPath = rootText.Text; if (d.ShowDialog(this) == DialogResult.OK) rootText.Text = d.SelectedPath; }
+        using (var d = new FolderBrowserDialog()) { d.Description = T("chooseFolder"); d.SelectedPath = rootText.Text; if (d.ShowDialog(this) == DialogResult.OK) { rootText.Text = d.SelectedPath; AddRecentRoot(d.SelectedPath); } }
     }
 
     void SettingChanged(object sender, EventArgs e)
@@ -324,14 +369,15 @@ public class StaticDockForm : Form
         if (ask && IsRunning() && MessageBox.Show(this, T("resetAsk"), T("title"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         bool wasRunning = IsRunning(); if (wasRunning) StopServer(false);
         loading = true;
-        rootText.Text = DefaultRoot(); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
+        rootText.Text = DefaultRoot(); AddRecentRoot(rootText.Text); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
         loading = false; SaveSettings(); RefreshUrls(); Log(T("resetDone")); if (wasRunning) StartServer();
     }
 
     void LoadSettings()
     {
         loading = true;
-        rootText.Text = DefaultRoot(); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
+        rootText.Items.Clear();
+        rootText.Text = DefaultRoot(); AddRecentRoot(rootText.Text); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
         try
         {
             if (File.Exists(settingsFile)) foreach (string line in File.ReadAllLines(settingsFile))
@@ -345,6 +391,7 @@ public class StaticDockForm : Form
                 else if (k == "lang") lang = v == "en" ? "en" : "zh";
                 else if (k == "autoStart") autoStartBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
                 else if (k == "openAfterStart") openAfterStartBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
+                else if (k == "recentRoots") LoadRecentRoots(v);
             }
         }
         catch { }
@@ -358,7 +405,7 @@ public class StaticDockForm : Form
         try
         {
             if (!Directory.Exists(settingsDir)) Directory.CreateDirectory(settingsDir);
-            File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lang=" + lang, "autoStart=" + (autoStartBox.Checked ? "1" : "0"), "openAfterStart=" + (openAfterStartBox.Checked ? "1" : "0") });
+            File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lang=" + lang, "autoStart=" + (autoStartBox.Checked ? "1" : "0"), "openAfterStart=" + (openAfterStartBox.Checked ? "1" : "0"), "recentRoots=" + RecentRootsLine() });
         }
         catch { }
     }
@@ -371,16 +418,17 @@ public class StaticDockForm : Form
         {
             if (!File.Exists(exe)) throw new Exception(T("missingExe") + exe);
             string root = Path.GetFullPath(rootText.Text.Trim()); if (!Directory.Exists(root)) throw new Exception(T("missingRoot") + root);
+            AddRecentRoot(root);
             StopServer(false); logBox.Clear(); actualPort = (int)portBox.Value;
             var psi = new ProcessStartInfo();
             psi.FileName = exe; psi.WorkingDirectory = root; psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
             psi.Arguments = "--root " + Q(root) + " --port " + actualPort + " --workers " + (int)workersBox.Value + " --queue " + (int)queueBox.Value;
             server = new Process(); server.StartInfo = psi;
-            server.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) BeginInvoke(new Action(delegate { if (e.Data.StartsWith("Port:")) { int p; if (Int32.TryParse(e.Data.Substring(5).Trim(), out p)) { actualPort = p; RefreshUrls(); } } })); };
+            server.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) { if (e.Data.StartsWith("Port:")) { int p; if (Int32.TryParse(e.Data.Substring(5).Trim(), out p)) actualPort = p; } BeginInvoke(new Action(delegate { RefreshUrls(); })); } };
             server.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) BeginInvoke(new Action(delegate { if (!IsBenignNetworkError(e.Data)) Log("[error] " + e.Data); })); };
-            server.Start(); server.BeginOutputReadLine(); server.BeginErrorReadLine(); File.WriteAllText(pidFile, server.Id.ToString());
+            server.Start(); server.BeginOutputReadLine(); server.BeginErrorReadLine(); TryWriteText(pidFile, server.Id.ToString());
             System.Threading.Thread.Sleep(800); if (server.HasExited) throw new Exception(T("startFailedFast") + server.ExitCode);
-            lastUrls = BuildUrls(actualPort, root); File.WriteAllText(Path.Combine(dir, "static-dock-urls.txt"), lastUrls, System.Text.Encoding.UTF8);
+            RefreshUrls(); lastUrls = BuildUrls(actualPort, root); TryWriteText(Path.Combine(settingsDir, "static-dock-urls.txt"), lastUrls);
             try { Clipboard.SetText(lastUrls); } catch { }
             SetRunning(true); RefreshUrls(); SaveSettings();
             Log(T("launchSummary")); Log(T("serverConfig")); Log(T("port") + ": " + actualPort + "    " + T("workers") + ": " + (int)workersBox.Value + "    " + T("queue") + ": " + (int)queueBox.Value); Log(T("openTip"));
@@ -391,12 +439,26 @@ public class StaticDockForm : Form
 
     bool IsBenignNetworkError(string s) { return s.IndexOf("10054") >= 0 || s.IndexOf("10060") >= 0 || s.IndexOf("强迫关闭") >= 0; }
 
+    void TryWriteText(string path, string text)
+    {
+        try
+        {
+            string parent = Path.GetDirectoryName(path);
+            if (!String.IsNullOrEmpty(parent) && !Directory.Exists(parent)) Directory.CreateDirectory(parent);
+            File.WriteAllText(path, text, System.Text.Encoding.UTF8);
+        }
+        catch { }
+    }
+
     string BuildUrls(int port, string root)
     {
+        string local = "http://127.0.0.1:" + port + "/?lang=" + lang;
+        string lan = FirstLanUrl(port);
+        string emulator = "http://10.0.2.2:" + port + "/?lang=" + lang;
         var lines = new List<string>();
-        lines.Add(T("local") + ": " + localUrl);
-        if (!String.IsNullOrEmpty(lanUrl)) lines.Add(T("lan") + ": " + lanUrl);
-        lines.Add(T("emulator") + ": " + emulatorUrl);
+        lines.Add(T("local") + ": " + local);
+        if (!String.IsNullOrEmpty(lan)) lines.Add(T("lan") + ": " + lan);
+        lines.Add(T("emulator") + ": " + emulator);
         lines.Add(""); lines.Add(T("root") + ": " + root);
         return String.Join(Environment.NewLine, lines.ToArray());
     }

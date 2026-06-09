@@ -316,6 +316,33 @@ fn handle_client(mut stream: TcpStream, root: &Path) -> io::Result<()> {
         }
     };
 
+    if !path.exists() {
+        send_text(
+            &mut stream,
+            404,
+            "Not Found",
+            "Not found.",
+            "text/plain; charset=utf-8",
+            head_only,
+        )?;
+        return Ok(());
+    }
+
+    let path = match ensure_inside_root(root, path) {
+        Some(path) => path,
+        None => {
+            send_text(
+                &mut stream,
+                403,
+                "Forbidden",
+                "Forbidden.",
+                "text/plain; charset=utf-8",
+                head_only,
+            )?;
+            return Ok(());
+        }
+    };
+
     if path.is_dir() {
         let index = path.join("index.html");
         if index.is_file() {
@@ -431,6 +458,16 @@ fn resolve_request_path(root: &Path, target: &str) -> Option<PathBuf> {
     }
 
     Some(path)
+}
+
+fn ensure_inside_root(root: &Path, path: PathBuf) -> Option<PathBuf> {
+    let root = fs::canonicalize(root).ok()?;
+    let canonical = fs::canonicalize(&path).ok()?;
+    if canonical.starts_with(&root) {
+        Some(canonical)
+    } else {
+        None
+    }
 }
 
 fn send_file(
@@ -661,6 +698,33 @@ fn send_api_list(
         }
     };
 
+    if !path.exists() {
+        send_text(
+            stream,
+            404,
+            "Not Found",
+            "{\"error\":\"not found\"}",
+            "application/json; charset=utf-8",
+            head_only,
+        )?;
+        return Ok(());
+    }
+
+    let path = match ensure_inside_root(root, path) {
+        Some(path) => path,
+        None => {
+            send_text(
+                stream,
+                403,
+                "Forbidden",
+                "{\"error\":\"forbidden\"}",
+                "application/json; charset=utf-8",
+                head_only,
+            )?;
+            return Ok(());
+        }
+    };
+
     if !path.is_dir() {
         send_text(
             stream,
@@ -692,13 +756,10 @@ fn send_api_list(
         base.push('/');
     }
 
+    let json_path = if base == "/" { "/" } else { base.trim_end_matches('/') };
     let mut body = String::new();
     body.push_str("{\"path\":\"");
-    body.push_str(&json_escape(base.trim_end_matches('/')));
-    if base == "/" {
-        body.truncate(body.len() - 1);
-        body.push('/');
-    }
+    body.push_str(&json_escape(json_path));
     body.push_str("\",\"entries\":[");
 
     let mut first = true;
@@ -946,14 +1007,37 @@ fn default_route_ip() -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
     let addr = socket.local_addr().ok()?;
-    Some(addr.ip().to_string())
+    let ip = addr.ip().to_string();
+    if is_special_ipv4(&ip) {
+        None
+    } else {
+        Some(ip)
+    }
+}
+
+fn is_special_ipv4(ip: &str) -> bool {
+    let parts = ip
+        .split('.')
+        .filter_map(|part| part.parse::<u8>().ok())
+        .collect::<Vec<_>>();
+    if parts.len() != 4 {
+        return true;
+    }
+
+    let a = parts[0];
+    let b = parts[1];
+    a == 0
+        || a == 127
+        || (a == 169 && b == 254)
+        || (a == 198 && (b == 18 || b == 19))
+        || a >= 224
 }
 
 #[cfg(windows)]
 fn platform_lan_addresses() -> Vec<(String, String)> {
     let script = r#"Get-NetIPAddress -AddressFamily IPv4 |
-Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-Sort-Object @{Expression={if ($_.InterfaceAlias -match 'VMware|Virtual|Loopback') { 1 } else { 0 }}}, InterfaceMetric, InterfaceAlias |
+Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike '198.18.*' -and $_.IPAddress -notlike '198.19.*' -and $_.PrefixOrigin -ne 'WellKnown' } |
+Sort-Object @{Expression={if ($_.IPAddress -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)') { 0 } elseif ($_.InterfaceAlias -match 'VMware|Virtual|Loopback|VPN|TAP|TUN|WSL|Docker|Hyper-V') { 2 } else { 1 }}}, InterfaceMetric, InterfaceAlias |
 ForEach-Object { "$($_.IPAddress)|$($_.InterfaceAlias)" }"#;
 
     let output = Command::new("powershell.exe")

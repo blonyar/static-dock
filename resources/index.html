@@ -38,6 +38,9 @@
     .actions a,.actions button { font-size:12px; padding:7px 9px; }
     code { background:#e2e8f0; padding:2px 6px; border-radius:6px; }
     .note { color:var(--muted); line-height:1.7; }
+    .status { margin-top:10px; color:var(--muted); font-size:13px; }
+    .error { padding:16px; color:#991b1b; background:#fee2e2; border:1px solid #fecaca; border-radius:12px; }
+    @media (max-width:760px) { header,main { padding-left:16px; padding-right:16px; } header .top { flex-direction:column; } .toolbar { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -69,10 +72,10 @@
   </section>
 </main>
 <script>
-const dict={
- zh:{title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。',up:'上一级',refresh:'刷新',imagesTitle:'图片',imagesText:'封面、头像、轮播图。',openImages:'打开图片目录',videosTitle:'视频',videosText:'MP4/WebM，支持拖动进度。',openVideos:'打开视频目录',dataTitle:'数据',dataText:'Mock 数据、接口配置。',openData:'打开数据目录',androidTitle:'安卓',emulator:'模拟器地址',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名'},
- en:{title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and preview images, videos, and JSON. Default port: 8787.',up:'Up',refresh:'Refresh',imagesTitle:'Images',imagesText:'Covers, avatars, and carousel images.',openImages:'Open Images',videosTitle:'Videos',videosText:'MP4/WebM with seek support.',openVideos:'Open Videos',dataTitle:'Data',dataText:'Mock data and API configuration.',openData:'Open Data',androidTitle:'Android',emulator:'Emulator URL',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name'}
-};
+  const dict={
+   zh:{title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。',up:'上一级',refresh:'刷新',imagesTitle:'图片',imagesText:'封面、头像、轮播图。',openImages:'打开图片目录',videosTitle:'视频',videosText:'MP4/WebM，支持拖动进度。',openVideos:'打开视频目录',dataTitle:'数据',dataText:'Mock 数据、接口配置。',openData:'打开数据目录',androidTitle:'安卓',emulator:'模拟器地址',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
+   en:{title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and preview images, videos, and JSON. Default port: 8787.',up:'Up',refresh:'Refresh',imagesTitle:'Images',imagesText:'Covers, avatars, and carousel images.',openImages:'Open Images',videosTitle:'Videos',videosText:'MP4/WebM with seek support.',openVideos:'Open Videos',dataTitle:'Data',dataText:'Mock data and API configuration.',openData:'Open Data',androidTitle:'Android',emulator:'Emulator URL',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
+  };
 let lang=new URLSearchParams(location.search).get('lang')||localStorage.getItem('staticdock.lang')||'zh';
 if(!dict[lang]) lang='zh';
 let currentPath='/', currentEntries=[];
@@ -82,7 +85,11 @@ langBox.onchange=()=>{lang=langBox.value;localStorage.setItem('staticdock.lang',
 search.oninput=renderEntries; filter.onchange=renderEntries;
 function t(k){return dict[lang][k]||k;}
 function applyLang(){document.documentElement.lang=lang==='en'?'en':'zh-CN';document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.title=t('title');document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';search.placeholder=t('search');filter.options[0].text=t('all');filter.options[1].text=t('dir');filter.options[2].text=t('image');filter.options[3].text=t('video');filter.options[4].text=t('json');filter.options[5].text=t('file');}
-function copyText(v){navigator.clipboard&&navigator.clipboard.writeText(v);}
+function copyText(v){
+ const done=()=>{document.getElementById('count').textContent=t('copied');};
+ const fail=()=>{document.getElementById('count').textContent=t('copyFail');};
+ if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done).catch(fail); else fail();
+}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
 function icon(k){return k==='dir'?'📁':k==='image'?'🖼️':k==='video'?'🎬':k==='json'?'{}':'📄';}
@@ -91,8 +98,15 @@ function goUp(){if(currentPath==='/')return;const p=currentPath.replace(/\/$/,''
 async function loadList(p){
  currentPath=p||'/';document.getElementById('path').textContent=currentPath;
  const grid=document.getElementById('grid');grid.innerHTML='<div class="note">'+t('loading')+'</div>';
- const res=await fetch('/__staticdock/api/list?path='+encodeURIComponent(currentPath));const data=await res.json();
- currentPath=data.path||currentPath;document.getElementById('path').textContent=currentPath;currentEntries=data.entries||[];renderEntries();
+ try{
+  const res=await fetch('/__staticdock/api/list?path='+encodeURIComponent(currentPath));
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  const data=await res.json();
+  currentPath=data.path||currentPath;document.getElementById('path').textContent=currentPath;currentEntries=data.entries||[];renderEntries();
+ }catch(err){
+  currentEntries=[];document.getElementById('count').textContent='';
+  grid.innerHTML='<div class="error">'+t('loadFail')+'<br><br><button onclick="loadList(currentPath)">'+t('refresh')+'</button></div>';
+ }
 }
 function renderEntries(){
  const grid=document.getElementById('grid');let entries=currentEntries.slice();const q=search.value.trim().toLowerCase();const f=filter.value;
