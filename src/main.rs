@@ -327,6 +327,11 @@ fn handle_client(mut stream: TcpStream, root: &Path) -> io::Result<()> {
         return Ok(());
     }
 
+    if normalized_target.starts_with("/__staticdock/api/qr") {
+        send_api_qr(&mut stream, &normalized_target, head_only)?;
+        return Ok(());
+    }
+
     let path = match resolve_request_path(root, &normalized_target) {
         Some(path) => path,
         None => {
@@ -773,6 +778,310 @@ fn send_headers(
     Ok(())
 }
 
+fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Result<()> {
+    let text = query_param(target, "text").unwrap_or_else(|| "/".to_string());
+    match qr_svg(&text) {
+        Some(svg) => send_text(
+            stream,
+            200,
+            "OK",
+            &svg,
+            "image/svg+xml; charset=utf-8",
+            head_only,
+        ),
+        None => send_text(
+            stream,
+            400,
+            "Bad Request",
+            "QR text is too long.",
+            "text/plain; charset=utf-8",
+            head_only,
+        ),
+    }
+}
+
+fn qr_svg(text: &str) -> Option<String> {
+    let modules = qr_matrix_v5_l(text.as_bytes())?;
+    let border = 4usize;
+    let size = modules.len() + border * 2;
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path fill=\"#111827\" d=\""
+    );
+    for (y, row) in modules.iter().enumerate() {
+        for (x, dark) in row.iter().enumerate() {
+            if *dark {
+                svg.push_str(&format!("M{} {}h1v1h-1z", x + border, y + border));
+            }
+        }
+    }
+    svg.push_str("\"/></svg>");
+    Some(svg)
+}
+
+fn qr_matrix_v5_l(data: &[u8]) -> Option<Vec<Vec<bool>>> {
+    const VERSION: usize = 5;
+    const SIZE: usize = 37;
+    const DATA_CODEWORDS: usize = 108;
+    const ECC_CODEWORDS: usize = 26;
+    if data.len() > 106 {
+        return None;
+    }
+
+    let mut bits = Vec::new();
+    append_bits(&mut bits, 0b0100, 4);
+    append_bits(&mut bits, data.len() as u32, 8);
+    for b in data {
+        append_bits(&mut bits, *b as u32, 8);
+    }
+    let capacity = DATA_CODEWORDS * 8;
+    let terminator = 4usize.min(capacity.saturating_sub(bits.len()));
+    bits.extend(std::iter::repeat_n(false, terminator));
+    while bits.len() % 8 != 0 {
+        bits.push(false);
+    }
+    let mut codewords = bits_to_bytes(&bits);
+    let pads = [0xec, 0x11];
+    let mut i = 0usize;
+    while codewords.len() < DATA_CODEWORDS {
+        codewords.push(pads[i % 2]);
+        i += 1;
+    }
+    let ecc = reed_solomon_ecc(&codewords, ECC_CODEWORDS);
+    codewords.extend(ecc);
+
+    let mut modules = vec![vec![false; SIZE]; SIZE];
+    let mut reserved = vec![vec![false; SIZE]; SIZE];
+    draw_function_patterns(&mut modules, &mut reserved, VERSION);
+
+    let mut bit_index = 0usize;
+    let total_bits = codewords.len() * 8;
+    let mut x = SIZE as i32 - 1;
+    let mut upward = true;
+    while x > 0 {
+        if x == 6 {
+            x -= 1;
+        }
+        for i in 0..SIZE {
+            let y = if upward { SIZE - 1 - i } else { i };
+            for dx in 0..2 {
+                let xx = (x - dx) as usize;
+                if reserved[y][xx] {
+                    continue;
+                }
+                let mut dark = if bit_index < total_bits {
+                    ((codewords[bit_index / 8] >> (7 - (bit_index % 8))) & 1) != 0
+                } else {
+                    false
+                };
+                bit_index += 1;
+                if (xx + y).is_multiple_of(2) {
+                    dark = !dark;
+                }
+                modules[y][xx] = dark;
+            }
+        }
+        upward = !upward;
+        x -= 2;
+    }
+    draw_format_bits(&mut modules, &mut reserved, 0);
+    Some(modules)
+}
+
+fn append_bits(bits: &mut Vec<bool>, value: u32, len: usize) {
+    for i in (0..len).rev() {
+        bits.push(((value >> i) & 1) != 0);
+    }
+}
+
+fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
+    bits.chunks(8)
+        .map(|chunk| {
+            let mut byte = 0u8;
+            for bit in chunk {
+                byte = (byte << 1) | u8::from(*bit);
+            }
+            byte << (8 - chunk.len())
+        })
+        .collect()
+}
+
+fn draw_function_patterns(modules: &mut [Vec<bool>], reserved: &mut [Vec<bool>], version: usize) {
+    let size = modules.len();
+    draw_finder(modules, reserved, 0, 0);
+    draw_finder(modules, reserved, size - 7, 0);
+    draw_finder(modules, reserved, 0, size - 7);
+    for i in 0..size {
+        if !reserved[6][i] {
+            modules[6][i] = i % 2 == 0;
+            reserved[6][i] = true;
+        }
+        if !reserved[i][6] {
+            modules[i][6] = i % 2 == 0;
+            reserved[i][6] = true;
+        }
+    }
+    let centers = alignment_centers(version);
+    for &cy in &centers {
+        for &cx in &centers {
+            if reserved[cy][cx] {
+                continue;
+            }
+            draw_alignment(modules, reserved, cx, cy);
+        }
+    }
+    modules[size - 8][8] = true;
+    reserved[size - 8][8] = true;
+    reserved[8][..9].fill(true);
+    for row in reserved.iter_mut().take(9) {
+        row[8] = true;
+    }
+    for i in 0..8 {
+        reserved[8][size - 1 - i] = true;
+        reserved[size - 1 - i][8] = true;
+    }
+}
+
+fn draw_finder(modules: &mut [Vec<bool>], reserved: &mut [Vec<bool>], x: usize, y: usize) {
+    let size = modules.len();
+    for dy in 0..9 {
+        for dx in 0..9 {
+            let xx = x as isize + dx as isize - 1;
+            let yy = y as isize + dy as isize - 1;
+            if xx < 0 || yy < 0 || xx >= size as isize || yy >= size as isize {
+                continue;
+            }
+            let xx = xx as usize;
+            let yy = yy as usize;
+            let dark = (1..=7).contains(&dx)
+                && (1..=7).contains(&dy)
+                && (dx == 1
+                    || dx == 7
+                    || dy == 1
+                    || dy == 7
+                    || ((3..=5).contains(&dx) && (3..=5).contains(&dy)));
+            modules[yy][xx] = dark;
+            reserved[yy][xx] = true;
+        }
+    }
+}
+
+fn draw_alignment(modules: &mut [Vec<bool>], reserved: &mut [Vec<bool>], cx: usize, cy: usize) {
+    for dy in 0..5 {
+        for dx in 0..5 {
+            let xx = cx + dx - 2;
+            let yy = cy + dy - 2;
+            let dark = dx == 0 || dx == 4 || dy == 0 || dy == 4 || (dx == 2 && dy == 2);
+            modules[yy][xx] = dark;
+            reserved[yy][xx] = true;
+        }
+    }
+}
+
+fn alignment_centers(version: usize) -> Vec<usize> {
+    match version {
+        5 => vec![6, 30],
+        _ => vec![],
+    }
+}
+
+fn draw_format_bits(modules: &mut [Vec<bool>], _reserved: &mut [Vec<bool>], mask: u8) {
+    let size = modules.len();
+    let data = (1u16 << 3) | mask as u16; // ECC level L, mask pattern
+    let mut rem = data << 10;
+    for i in (10..=14).rev() {
+        if ((rem >> i) & 1) != 0 {
+            rem ^= 0x537 << (i - 10);
+        }
+    }
+    let bits = ((data << 10) | rem) ^ 0x5412;
+    let coords1 = [
+        (8, 0),
+        (8, 1),
+        (8, 2),
+        (8, 3),
+        (8, 4),
+        (8, 5),
+        (8, 7),
+        (8, 8),
+        (7, 8),
+        (5, 8),
+        (4, 8),
+        (3, 8),
+        (2, 8),
+        (1, 8),
+        (0, 8),
+    ];
+    let coords2 = [
+        (size - 1, 8),
+        (size - 2, 8),
+        (size - 3, 8),
+        (size - 4, 8),
+        (size - 5, 8),
+        (size - 6, 8),
+        (size - 7, 8),
+        (8, size - 8),
+        (8, size - 7),
+        (8, size - 6),
+        (8, size - 5),
+        (8, size - 4),
+        (8, size - 3),
+        (8, size - 2),
+        (8, size - 1),
+    ];
+    for i in 0..15 {
+        let dark = ((bits >> i) & 1) != 0;
+        let (x1, y1) = coords1[i];
+        modules[y1][x1] = dark;
+        let (x2, y2) = coords2[i];
+        modules[y2][x2] = dark;
+    }
+}
+
+fn reed_solomon_ecc(data: &[u8], degree: usize) -> Vec<u8> {
+    let generator = rs_generator(degree);
+    let mut result = vec![0u8; degree];
+    for &byte in data {
+        let factor = byte ^ result[0];
+        result.remove(0);
+        result.push(0);
+        for (r, &g) in result.iter_mut().zip(generator.iter()) {
+            *r ^= gf_mul(g, factor);
+        }
+    }
+    result
+}
+
+fn rs_generator(degree: usize) -> Vec<u8> {
+    let mut result = vec![1u8];
+    let mut root = 1u8;
+    for _ in 0..degree {
+        let mut next = vec![0u8; result.len() + 1];
+        for (i, &coef) in result.iter().enumerate() {
+            next[i] ^= gf_mul(coef, root);
+            next[i + 1] ^= coef;
+        }
+        result = next;
+        root = gf_mul(root, 0x02);
+    }
+    result
+}
+
+fn gf_mul(mut x: u8, mut y: u8) -> u8 {
+    let mut z = 0u8;
+    while y != 0 {
+        if y & 1 != 0 {
+            z ^= x;
+        }
+        let carry = x & 0x80 != 0;
+        x <<= 1;
+        if carry {
+            x ^= 0x1d;
+        }
+        y >>= 1;
+    }
+    z
+}
+
 fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool) -> io::Result<()> {
     let body = format!(
         "{{\"name\":\"StaticDock\",\"root\":\"{}\"}}",
@@ -952,8 +1261,15 @@ fn entry_kind(path: &Path, is_dir: bool) -> &'static str {
         .to_ascii_lowercase()
         .as_str()
     {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "image",
-        "mp4" | "webm" | "mov" | "m4v" => "video",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" => "image",
+        "mp4" | "webm" | "mov" | "m4v" | "avi" | "mkv" => "video",
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" => "audio",
+        "zip" | "rar" | "7z" | "tar" | "gz" => "archive",
+        "exe" | "msi" | "apk" | "dmg" => "app",
+        "pdf" => "pdf",
+        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => "doc",
+        "rs" | "js" | "ts" | "tsx" | "jsx" | "cs" | "py" | "java" | "go" | "cpp" | "c" | "h"
+        | "css" | "toml" | "yaml" | "yml" => "code",
         "json" => "json",
         "html" | "htm" => "html",
         _ => "file",
@@ -1003,12 +1319,10 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
     };
     let mut body = String::from(
         r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StaticDock resources</title><style>
-:root{--blue:#1e40af;--pink:#be185d;--ink:#111827;--muted:#64748b;--line:rgba(148,163,184,.28);--card:rgba(255,255,255,.9)}*{box-sizing:border-box}body{margin:0;font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 15%,rgba(225,29,114,.12),transparent 28%),radial-gradient(circle at 90% 8%,rgba(6,182,212,.14),transparent 30%),linear-gradient(145deg,#fff 0%,#f8fafc 44%,#fff1f5 100%)}main{width:min(1120px,calc(100% - 42px));margin:0 auto;padding:26px 0 44px}.hero{border-radius:32px;padding:34px;background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.68));box-shadow:0 24px 60px rgba(15,23,42,.12);border:1px solid rgba(255,255,255,.72)}.eyebrow{color:var(--pink);font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:10px 0 8px;font-size:38px;letter-spacing:-1.4px}.path{font-family:Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn,button{border:0;border-radius:999px;background:var(--blue);color:#fff;padding:10px 15px;text-decoration:none;font-weight:800;cursor:pointer}.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}.grid{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}.item{border:1px solid var(--line);border-radius:24px;background:var(--card);overflow:hidden;box-shadow:0 12px 34px rgba(15,23,42,.07)}.thumb{height:118px;display:grid;place-items:center;font-size:42px;text-decoration:none;background:linear-gradient(135deg,#e0f2fe,#fce7f3)}.meta{padding:12px}.name{font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sub{color:var(--muted);font-size:12px;margin-top:5px}.row{display:flex;gap:8px;margin-top:12px}.row .btn{font-size:12px;padding:7px 10px}.empty{margin-top:20px;border-radius:22px;background:#fff;padding:24px;color:var(--muted)}@media(max-width:640px){main{width:min(100% - 28px,1120px)}h1{font-size:30px}.grid{grid-template-columns:1fr}}</style></head><body><main><section class="hero"><div class="eyebrow">StaticDock Directory</div><h1>资源目录</h1><div class="path">"#,
+:root{--blue:#1e40af;--pink:#be185d;--ink:#111827;--muted:#64748b;--line:rgba(148,163,184,.28);--card:rgba(255,255,255,.9)}*{box-sizing:border-box}body{margin:0;font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 15%,rgba(225,29,114,.12),transparent 28%),radial-gradient(circle at 90% 8%,rgba(6,182,212,.14),transparent 30%),linear-gradient(145deg,#fff 0%,#f8fafc 44%,#fff1f5 100%)}main{width:min(1120px,calc(100% - 42px));margin:0 auto;padding:26px 0 44px}.hero{border-radius:32px;padding:34px;background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.68));box-shadow:0 24px 60px rgba(15,23,42,.12);border:1px solid rgba(255,255,255,.72)}.eyebrow{color:var(--pink);font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:10px 0 8px;font-size:38px;letter-spacing:-1.4px}.path{font-family:Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn,button{border:0;border-radius:999px;background:var(--blue);color:#fff;padding:10px 15px;text-decoration:none;font-weight:800;cursor:pointer}.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}.grid{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}.item{border:1px solid var(--line);border-radius:24px;background:var(--card);overflow:hidden;box-shadow:0 12px 34px rgba(15,23,42,.07)}.thumb{height:132px;display:grid;place-items:center;font-size:42px;text-decoration:none;background:linear-gradient(135deg,#e0f2fe,#fce7f3);overflow:hidden}.thumb img,.thumb video{width:100%;height:100%;object-fit:cover}.file-icon{width:74px;height:74px;border-radius:24px;display:grid;place-items:center;font-size:34px;background:rgba(255,255,255,.72);box-shadow:inset 0 0 0 1px rgba(255,255,255,.8),0 12px 28px rgba(15,23,42,.08)}.archive{background:#fef3c7}.app{background:#dbeafe}.doc{background:#e0e7ff}.pdf{background:#fee2e2}.audio{background:#dcfce7}.code{background:#e0f2fe}.json{background:#f3e8ff}.meta{padding:12px}.name{font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sub{color:var(--muted);font-size:12px;margin-top:5px}.empty{margin-top:20px;border-radius:22px;background:#fff;padding:24px;color:var(--muted)}.ctx{position:fixed;z-index:20;display:none;min-width:150px;padding:8px;border:1px solid var(--line);border-radius:16px;background:white;box-shadow:0 20px 50px rgba(15,23,42,.2)}.ctx.open{display:block}.ctx button{display:block;width:100%;text-align:left;background:white;color:var(--ink);box-shadow:none;border-radius:10px;padding:9px 11px}@media(max-width:640px){main{width:min(100% - 28px,1120px)}h1{font-size:30px}.grid{grid-template-columns:1fr}}</style></head><body><main><section class="hero"><div class="eyebrow">StaticDock Directory</div><h1>资源目录</h1><div class="path">"#,
     );
     body.push_str(&html_escape(current));
-    body.push_str(
-        r#"</div><div class="actions"><a class="btn ghost" href="/">资源首页</a><button onclick="navigator.clipboard&&navigator.clipboard.writeText(location.href)">复制地址</button></div></section>"#,
-    );
+    body.push_str(r#"</div><div class="actions"><a class="btn ghost" href="/">资源首页</a><button onclick="navigator.clipboard&&navigator.clipboard.writeText(location.href)">复制当前地址</button></div></section>"#);
 
     if entries.is_empty() {
         body.push_str("<div class=\"empty\">这个目录是空的。</div>");
@@ -1023,7 +1337,6 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
                 format!("{}{}", base, percent_encode(&file_name))
             };
             let kind = entry_kind(&entry.path(), is_dir);
-            let icon = file_icon(kind);
             let metadata = entry.metadata().ok();
             let bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
             let display_name = if is_dir {
@@ -1031,26 +1344,47 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
             } else {
                 file_name.clone()
             };
-            body.push_str("<article class=\"item\"><a class=\"thumb\" href=\"");
-            body.push_str(&html_escape(&href));
+            let href_escaped = html_escape(&href);
+            body.push_str("<article class=\"item\" oncontextmenu=\"showCtx(event,'");
+            body.push_str(&js_escape(&href));
+            body.push_str("')\"><a class=\"thumb\" href=\"");
+            body.push_str(&href_escaped);
             body.push_str("\">");
-            body.push_str(icon);
+            if kind == "image" {
+                body.push_str("<img loading=\"lazy\" src=\"");
+                body.push_str(&href_escaped);
+                body.push_str("\">");
+            } else if kind == "video" {
+                body.push_str("<video muted preload=\"metadata\" src=\"");
+                body.push_str(&href_escaped);
+                body.push_str("#t=0.1\"></video>");
+            } else {
+                body.push_str("<span class=\"file-icon ");
+                body.push_str(kind);
+                body.push_str("\">");
+                body.push_str(file_icon(kind));
+                body.push_str("</span>");
+            }
             body.push_str("</a><div class=\"meta\"><div class=\"name\">");
             body.push_str(&html_escape(&display_name));
             body.push_str("</div><div class=\"sub\">");
             body.push_str(kind);
             body.push_str(" · ");
             body.push_str(&format_bytes(bytes));
-            body.push_str("</div><div class=\"row\"><a class=\"btn\" href=\"");
-            body.push_str(&html_escape(&href));
-            body.push_str("\">打开</a><button class=\"ghost\" onclick=\"navigator.clipboard&&navigator.clipboard.writeText(location.origin+'");
-            body.push_str(&html_escape(&href));
-            body.push_str("')\">复制</button></div></div></article>");
+            body.push_str("</div></div></article>");
         }
         body.push_str("</section>");
     }
-    body.push_str("</main></body></html>");
+    body.push_str(r#"<div class="ctx" id="ctx"><button onclick="openCtx()">打开</button><button onclick="copyCtx()">复制 URL</button></div><script>let ctx='';function showCtx(e,u){e.preventDefault();ctx=u;const m=document.getElementById('ctx');m.style.left=Math.min(e.clientX,innerWidth-170)+'px';m.style.top=Math.min(e.clientY,innerHeight-100)+'px';m.classList.add('open')}function hideCtx(){document.getElementById('ctx').classList.remove('open')}function openCtx(){hideCtx();location.href=ctx}function copyCtx(){hideCtx();navigator.clipboard&&navigator.clipboard.writeText(location.origin+ctx)}document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape')hideCtx()});</script></main></body></html>"#);
     Ok(body)
+}
+
+fn js_escape(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', "\\n")
+        .replace('\r', "")
 }
 
 fn file_icon(kind: &str) -> &'static str {
@@ -1058,6 +1392,12 @@ fn file_icon(kind: &str) -> &'static str {
         "dir" => "📁",
         "image" => "🖼️",
         "video" => "🎬",
+        "audio" => "🎧",
+        "archive" => "🗜️",
+        "app" => "📦",
+        "doc" => "📝",
+        "pdf" => "📕",
+        "code" => "⌘",
         "json" => "{}",
         "html" => "🌐",
         _ => "📄",

@@ -362,7 +362,7 @@ public class StaticDockForm : Form
             copy.Click += delegate { CopyUrl(url); };
 
             dialog.Controls.Add(title); dialog.Controls.Add(hint); dialog.Controls.Add(picture); dialog.Controls.Add(urlBox); dialog.Controls.Add(copy);
-            picture.LoadAsync("https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=" + Uri.EscapeDataString(url));
+            picture.LoadAsync(new Uri(new Uri(url), "/__staticdock/api/qr?text=" + Uri.EscapeDataString(url)).ToString());
             dialog.ShowDialog(this);
         }
     }

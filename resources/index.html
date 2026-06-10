@@ -90,12 +90,18 @@
     .grid { padding:18px; display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:16px; }
     .item { border:1px solid var(--line); border-radius:24px; background:white; overflow:hidden; min-height:176px; display:flex; flex-direction:column; box-shadow:0 10px 28px rgba(15,23,42,.055); transition:.18s ease; }
     .item:hover { transform:translateY(-3px); box-shadow:0 18px 42px rgba(15,23,42,.11); }
-    .thumb { height:122px; background:linear-gradient(135deg,#e0f2fe,#fce7f3); display:flex; align-items:center; justify-content:center; color:#475569; font-size:40px; text-decoration:none; }
-    .thumb img { width:100%; height:100%; object-fit:cover; }
+    .thumb { height:132px; background:linear-gradient(135deg,#e0f2fe,#fce7f3); display:flex; align-items:center; justify-content:center; color:#475569; font-size:40px; text-decoration:none; overflow:hidden; }
+    .thumb img,.thumb video { width:100%; height:100%; object-fit:cover; }
+    .file-icon { width:74px; height:74px; border-radius:24px; display:grid; place-items:center; font-size:34px; background:rgba(255,255,255,.72); box-shadow:inset 0 0 0 1px rgba(255,255,255,.8),0 12px 28px rgba(15,23,42,.08); }
+    .file-icon.archive{background:#fef3c7}.file-icon.app{background:#dbeafe}.file-icon.doc{background:#e0e7ff}.file-icon.pdf{background:#fee2e2}.file-icon.audio{background:#dcfce7}.file-icon.code{background:#e0f2fe}.file-icon.json{background:#f3e8ff}
     .meta { padding:12px; }
     .name { font-weight:900; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
     .sub { color:var(--muted); font-size:12px; margin-top:5px; }
-    .actions { display:flex; gap:8px; margin-top:11px; }
+    .actions { display:none; }
+    .context-menu { position:fixed; z-index:80; display:none; min-width:150px; padding:8px; border:1px solid var(--line); border-radius:16px; background:white; box-shadow:0 20px 50px rgba(15,23,42,.2); }
+    .context-menu.open { display:block; }
+    .context-menu button { display:block; width:100%; text-align:left; justify-content:flex-start; margin:0; padding:9px 11px; background:white; color:var(--ink); box-shadow:none; border-radius:10px; }
+    .context-menu button:hover { background:#f1f5f9; transform:none; box-shadow:none; }
     code { background:#e2e8f0; padding:2px 6px; border-radius:7px; }
     .note { color:var(--muted); line-height:1.7; }
     .status { margin-top:10px; color:var(--muted); font-size:13px; }
@@ -165,7 +171,7 @@
     <section class="toolbar">
       <div id="path" class="path">/</div>
       <input id="search" placeholder="搜索文件名">
-      <select id="filter"><option value="all">全部类型</option><option value="dir">文件夹</option><option value="image">图片</option><option value="video">视频</option><option value="json">JSON</option><option value="file">文件</option></select>
+      <select id="filter"><option value="all">全部类型</option><option value="dir">文件夹</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option><option value="archive">压缩包</option><option value="app">安装包</option><option value="doc">文档</option><option value="pdf">PDF</option><option value="code">代码</option><option value="json">JSON</option><option value="file">文件</option></select>
       <button class="secondary" onclick="goUp()" data-i18n="up">上一级</button>
       <button onclick="loadList(currentPath)" data-i18n="refresh">刷新</button>
     </section>
@@ -175,6 +181,7 @@
       <div class="grid" id="grid"></div>
     </section>
   </div>
+  <div class="context-menu" id="ctx"><button onclick="ctxOpen()" data-i18n="open">打开</button><button onclick="ctxCopy()" data-i18n="copy">复制 URL</button></div>
   <div class="modal" id="qrModal" onclick="if(event.target===this)closeQr()">
     <div class="modal-card">
       <button class="ghost modal-close" onclick="closeQr()">×</button>
@@ -187,8 +194,8 @@
   </div>
 <script>
 const dict={
- zh:{home:'首页',files:'资源',share:'分享',title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，用手机扫码访问局域网资源。图片、视频、JSON 和文档都可以快速预览与分享。',scanPhone:'手机扫码',browseNow:'浏览资源',foldersTitle:'资源入口',foldersText:'常用资源目录，点击即可切换浏览。',imagesTitle:'图片',videosTitle:'视频',dataTitle:'数据',docsTitle:'文档',recentTitle:'快捷操作',recentText:'像搜索记录一样快速复制常用访问地址。',phoneTitle:'手机访问',phoneText:'电脑和手机在同一 Wi‑Fi 下，扫码打开当前资源服务。',showQr:'显示二维码',openQr:'打开手机二维码',qrTitle:'手机访问二维码',qrHint:'手机和电脑连接同一 Wi‑Fi 后扫码访问。',up:'上一级',refresh:'刷新',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
- en:{home:'Home',files:'Files',share:'Share',title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and scan from your phone to open LAN resources. Images, videos, JSON, and documents are ready to preview and share.',scanPhone:'Phone QR',browseNow:'Browse Files',foldersTitle:'Resource Shortcuts',foldersText:'Jump into common resource folders.',imagesTitle:'Images',videosTitle:'Videos',dataTitle:'Data',docsTitle:'Docs',recentTitle:'Quick Actions',recentText:'Copy common access URLs like recent searches.',phoneTitle:'Phone Access',phoneText:'Keep your phone on the same Wi‑Fi and scan to open this service.',showQr:'Show QR',openQr:'Open phone QR',qrTitle:'Phone QR Code',qrHint:'Keep your phone on the same Wi‑Fi and scan to open this service.',up:'Up',refresh:'Refresh',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
+ zh:{home:'首页',files:'资源',share:'分享',title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，用手机扫码访问局域网资源。图片、视频、JSON 和文档都可以快速预览与分享。',scanPhone:'手机扫码',browseNow:'浏览资源',foldersTitle:'资源入口',foldersText:'常用资源目录，点击即可切换浏览。',imagesTitle:'图片',videosTitle:'视频',dataTitle:'数据',docsTitle:'文档',recentTitle:'快捷操作',recentText:'像搜索记录一样快速复制常用访问地址。',phoneTitle:'手机访问',phoneText:'电脑和手机在同一 Wi‑Fi 下，扫码打开当前资源服务。',showQr:'显示二维码',openQr:'打开手机二维码',qrTitle:'手机访问二维码',qrHint:'手机和电脑连接同一 Wi‑Fi 后扫码访问。',up:'上一级',refresh:'刷新',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',audio:'音频',archive:'压缩包',app:'安装包',doc:'文档',pdf:'PDF',code:'代码',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
+ en:{home:'Home',files:'Files',share:'Share',title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and scan from your phone to open LAN resources. Images, videos, JSON, and documents are ready to preview and share.',scanPhone:'Phone QR',browseNow:'Browse Files',foldersTitle:'Resource Shortcuts',foldersText:'Jump into common resource folders.',imagesTitle:'Images',videosTitle:'Videos',dataTitle:'Data',docsTitle:'Docs',recentTitle:'Quick Actions',recentText:'Copy common access URLs like recent searches.',phoneTitle:'Phone Access',phoneText:'Keep your phone on the same Wi‑Fi and scan to open this service.',showQr:'Show QR',openQr:'Open phone QR',qrTitle:'Phone QR Code',qrHint:'Keep your phone on the same Wi‑Fi and scan to open this service.',up:'Up',refresh:'Refresh',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',audio:'Audio',archive:'Archive',app:'Installer',doc:'Document',pdf:'PDF',code:'Code',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
 };
 let lang=new URLSearchParams(location.search).get('lang')||localStorage.getItem('staticdock.lang')||'zh';
 if(!dict[lang]) lang='zh';
@@ -205,19 +212,19 @@ function applyLang(){
  document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';
  document.getElementById('localUrl').textContent=location.origin+'/';
  search.placeholder=t('search');
- filter.options[0].text=t('all');filter.options[1].text=t('dir');filter.options[2].text=t('image');filter.options[3].text=t('video');filter.options[4].text=t('json');filter.options[5].text=t('file');
+ Array.from(filter.options).forEach(o=>{o.text=t(o.value);});
 }
 function copyText(v){
  const done=()=>{document.getElementById('count').textContent=t('copied');};
  const fail=()=>{document.getElementById('count').textContent=t('copyFail');};
  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done).catch(fail); else fail();
 }
-function openQr(v){const modal=document.getElementById('qrModal');document.getElementById('qrUrl').textContent=v;document.getElementById('qrImg').src='https://api.qrserver.com/v1/create-qr-code/?size=300x300&data='+encodeURIComponent(v);modal.classList.add('open');}
+function openQr(v){const modal=document.getElementById('qrModal');document.getElementById('qrUrl').textContent=v;document.getElementById('qrImg').src='/__staticdock/api/qr?text='+encodeURIComponent(v);modal.classList.add('open');}
 function closeQr(){document.getElementById('qrModal').classList.remove('open');}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsStr(s){return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');}
 function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
-function icon(k){return k==='dir'?'📁':k==='image'?'🖼️':k==='video'?'🎬':k==='json'?'{}':'📄';}
+function icon(k){return {dir:'📁',image:'🖼️',video:'🎬',audio:'🎧',archive:'🗜️',app:'📦',doc:'📝',pdf:'📕',code:'⌘',json:'{}',html:'🌐',file:'📄'}[k]||'📄';}
 function kindName(k){return t(k)||k;}
 function goUp(){if(currentPath==='/')return;const p=currentPath.replace(/\/$/,'').split('/');p.pop();loadList(p.join('/')||'/');}
 async function loadList(p){
@@ -236,11 +243,16 @@ async function loadList(p){
 function renderEntries(){
  const grid=document.getElementById('grid');let entries=currentEntries.slice();const q=search.value.trim().toLowerCase();const f=filter.value;
  if(q)entries=entries.filter(e=>e.name.toLowerCase().includes(q));
- if(f!=='all')entries=entries.filter(e=>e.kind===f||(f==='file'&&!['dir','image','video','json','html'].includes(e.kind)));
+ if(f!=='all')entries=entries.filter(e=>e.kind===f||(f==='file'&&!['dir','image','video','audio','archive','app','doc','pdf','code','json','html'].includes(e.kind)));
  document.getElementById('count').textContent=entries.length+(lang==='en'?t('items'):t('items'));
  if(!entries.length){grid.innerHTML='<div class="note">'+t('empty')+'</div>';return;}
- grid.innerHTML=entries.map(e=>{const url=e.url;const th=e.kind==='image'?`<img src="${esc(url)}" loading="lazy">`:icon(e.kind);const open=e.kind==='dir'?`loadList('${jsStr(url)}');return false;`:'';return `<div class="item"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div><div class="actions"><a class="btn small" href="${esc(url)}">${t('open')}</a><button class="ghost small" onclick="copyText(location.origin+'${jsStr(url)}')">${t('copy')}</button></div></div></div>`;}).join('');
+ grid.innerHTML=entries.map(e=>{const url=e.url;let th;if(e.kind==='image')th=`<img src="${esc(url)}" loading="lazy">`;else if(e.kind==='video')th=`<video src="${esc(url)}#t=0.1" muted preload="metadata"></video>`;else th=`<span class="file-icon ${esc(e.kind)}">${icon(e.kind)}</span>`;const open=e.kind==='dir'?`loadList('${jsStr(url)}');return false;`:'';return `<div class="item" oncontextmenu="showCtx(event,'${jsStr(url)}',${e.kind==='dir'})"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div></div></div>`;}).join('');
 }
+let ctxUrl='',ctxIsDir=false;function showCtx(ev,url,isDir){ev.preventDefault();ctxUrl=url;ctxIsDir=isDir;const m=document.getElementById('ctx');m.style.left=Math.min(ev.clientX,innerWidth-170)+'px';m.style.top=Math.min(ev.clientY,innerHeight-100)+'px';m.classList.add('open');}
+function hideCtx(){document.getElementById('ctx').classList.remove('open');}
+function ctxOpen(){hideCtx();if(ctxIsDir)loadList(ctxUrl);else location.href=ctxUrl;}
+function ctxCopy(){hideCtx();copyText(location.origin+ctxUrl);}
+document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closeQr();}});
 applyLang();loadList('/');
 </script>
 </body>
