@@ -92,7 +92,7 @@ set "MODE=%~2"
 >> "%OUT%" echo resources\data\     JSON mock 数据
 >> "%OUT%" echo resources\docs\     文档或其他静态文件
 >> "%OUT%" echo.
->> "%OUT%" echo GUI 支持中文 / English、最近使用目录、设置记忆、自动重启、恢复默认、打开文件夹、检测端口。
+>> "%OUT%" echo GUI 支持中文 / English、最近使用目录、设置记忆、自动重启、恢复默认、打开文件夹、检测端口、手机访问二维码。
 if "%MODE%"=="full" (
   >> "%OUT%" echo.
   >> "%OUT%" echo 本包包含 loadtest\ 压测素材和 run-loadtest.bat。

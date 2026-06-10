@@ -47,7 +47,7 @@ public class StaticDockForm : Form
     TextBox localText, lanText, emulatorText, logBox;
     NumericUpDown portBox, workersBox, queueBox;
     Button browseBtn, openFolderBtn, startBtn, stopBtn, checkPortBtn, resetBtn, advancedBtn;
-    Button openLocalBtn, copyLocalBtn, copyLanBtn, copyEmulatorBtn, copyAllBtn;
+    Button openLocalBtn, copyLocalBtn, qrLanBtn, copyLanBtn, copyEmulatorBtn, copyAllBtn;
     CheckBox autoStartBox, openAfterStartBox;
     ComboBox langBox;
     Panel advancedPanel;
@@ -95,6 +95,7 @@ public class StaticDockForm : Form
             case "emulator": return en ? "Android emulator" : "安卓模拟器";
             case "open": return en ? "Open" : "打开";
             case "copy": return en ? "Copy" : "复制";
+            case "qr": return en ? "QR" : "二维码";
             case "copyAll": return en ? "Copy All" : "复制全部";
             case "advancedShow": return en ? "Show advanced settings" : "显示高级设置";
             case "advancedHide": return en ? "Hide advanced settings" : "隐藏高级设置";
@@ -192,6 +193,7 @@ public class StaticDockForm : Form
         copyLocalBtn = SmallButton(addrPanel, 805, 40); copyLocalBtn.Click += delegate { CopyUrl(localUrl); };
         lanTitle = MakeLabel(addrPanel, 16, 76, 110, 24);
         lanText = AddressBox(addrPanel, 130, 74);
+        qrLanBtn = SmallButton(addrPanel, 720, 72); qrLanBtn.Click += delegate { OpenQr(lanUrl); };
         copyLanBtn = SmallButton(addrPanel, 805, 72); copyLanBtn.Click += delegate { CopyUrl(lanUrl); };
         emulatorTitle = MakeLabel(addrPanel, 16, 108, 110, 24);
         emulatorText = AddressBox(addrPanel, 130, 106);
@@ -271,7 +273,7 @@ public class StaticDockForm : Form
         startBtn.Text = T("start"); stopBtn.Text = T("stop"); checkPortBtn.Text = T("checkPort"); resetBtn.Text = T("reset");
         autoStartBox.Text = T("autostart"); openAfterStartBox.Text = T("openAfterStart"); hintLabel.Text = IsRunning() ? T("hintRunning") : T("hintDefault");
         addressLabel.Text = T("addresses"); localTitle.Text = T("local"); lanTitle.Text = T("lan"); emulatorTitle.Text = T("emulator");
-        openLocalBtn.Text = T("open"); copyLocalBtn.Text = T("copy"); copyLanBtn.Text = T("copy"); copyEmulatorBtn.Text = T("copy"); copyAllBtn.Text = T("copyAll");
+        openLocalBtn.Text = T("open"); copyLocalBtn.Text = T("copy"); qrLanBtn.Text = T("qr"); copyLanBtn.Text = T("copy"); copyEmulatorBtn.Text = T("copy"); copyAllBtn.Text = T("copyAll");
         advancedTitle.Text = T("advanced"); portLabel.Text = T("port"); workersLabel.Text = T("workers"); queueLabel.Text = T("queue"); advancedBtn.Text = advancedVisible ? T("advancedHide") : T("advancedShow");
         RefreshUrls();
     }
@@ -285,7 +287,7 @@ public class StaticDockForm : Form
 
     void SetRunning(bool r)
     {
-        startBtn.Enabled = !r; stopBtn.Enabled = r; openLocalBtn.Enabled = r; copyLocalBtn.Enabled = r; copyLanBtn.Enabled = r; copyEmulatorBtn.Enabled = r; copyAllBtn.Enabled = r;
+        startBtn.Enabled = !r; stopBtn.Enabled = r; openLocalBtn.Enabled = r; copyLocalBtn.Enabled = r; qrLanBtn.Enabled = r; copyLanBtn.Enabled = r; copyEmulatorBtn.Enabled = r; copyAllBtn.Enabled = r;
         statusLabel.Text = r ? T("running") : T("stopped");
         statusLabel.BackColor = r ? Color.FromArgb(22, 163, 74) : Color.FromArgb(239, 68, 68);
         hintLabel.Text = r ? T("hintRunning") : T("hintDefault");
@@ -337,6 +339,12 @@ public class StaticDockForm : Form
     }
 
     void OpenUrl(string url) { if (!String.IsNullOrEmpty(url) && url != "-") Process.Start(url); }
+    void OpenQr(string url)
+    {
+        if (String.IsNullOrEmpty(url) || url == "-") return;
+        string qr = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=" + Uri.EscapeDataString(url);
+        Process.Start(qr);
+    }
     void CopyUrl(string url) { if (!String.IsNullOrEmpty(url) && url != "-") { Clipboard.SetText(url); Log(T("copied")); } }
 
     void OpenResourceFolder()
