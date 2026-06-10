@@ -96,6 +96,8 @@ public class StaticDockForm : Form
             case "open": return en ? "Open" : "打开";
             case "copy": return en ? "Copy" : "复制";
             case "qr": return en ? "QR" : "二维码";
+            case "qrTitle": return en ? "Phone QR Code" : "手机访问二维码";
+            case "qrHint": return en ? "Scan this QR code with your phone on the same Wi-Fi." : "手机和电脑连接同一 Wi-Fi 后扫码访问。";
             case "copyAll": return en ? "Copy All" : "复制全部";
             case "advancedShow": return en ? "Show advanced settings" : "显示高级设置";
             case "advancedHide": return en ? "Hide advanced settings" : "隐藏高级设置";
@@ -342,8 +344,27 @@ public class StaticDockForm : Form
     void OpenQr(string url)
     {
         if (String.IsNullOrEmpty(url) || url == "-") return;
-        string qr = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=" + Uri.EscapeDataString(url);
-        Process.Start(qr);
+        using (var dialog = new Form())
+        {
+            dialog.Text = T("qrTitle");
+            dialog.StartPosition = FormStartPosition.CenterParent;
+            dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+            dialog.MaximizeBox = false;
+            dialog.MinimizeBox = false;
+            dialog.ClientSize = new Size(360, 430);
+            dialog.BackColor = Color.White;
+
+            var title = new Label { Left = 20, Top = 18, Width = 320, Height = 28, Text = T("qrTitle"), Font = new Font("Microsoft YaHei UI", 13f, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter };
+            var hint = new Label { Left = 28, Top = 50, Width = 304, Height = 42, Text = T("qrHint"), ForeColor = Color.FromArgb(100, 116, 139), TextAlign = ContentAlignment.MiddleCenter };
+            var picture = new PictureBox { Left = 50, Top = 102, Width = 260, Height = 260, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.White };
+            var urlBox = new TextBox { Left = 28, Top = 374, Width = 304, Height = 24, ReadOnly = true, Text = url, Font = new Font("Consolas", 9f) };
+            var copy = new Button { Left = 118, Top = 402, Width = 124, Height = 28, Text = T("copy") };
+            copy.Click += delegate { CopyUrl(url); };
+
+            dialog.Controls.Add(title); dialog.Controls.Add(hint); dialog.Controls.Add(picture); dialog.Controls.Add(urlBox); dialog.Controls.Add(copy);
+            picture.LoadAsync("https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=" + Uri.EscapeDataString(url));
+            dialog.ShowDialog(this);
+        }
     }
     void CopyUrl(string url) { if (!String.IsNullOrEmpty(url) && url != "-") { Clipboard.SetText(url); Log(T("copied")); } }
 

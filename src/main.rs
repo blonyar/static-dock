@@ -996,32 +996,87 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
         base.push('/');
     }
 
+    let current = if base == "/" {
+        "/"
+    } else {
+        base.trim_end_matches('/')
+    };
     let mut body = String::from(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>StaticDock resources</title></head><body><h1>StaticDock resources</h1><ul>",
+        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StaticDock resources</title><style>
+:root{--blue:#1e40af;--pink:#be185d;--ink:#111827;--muted:#64748b;--line:rgba(148,163,184,.28);--card:rgba(255,255,255,.9)}*{box-sizing:border-box}body{margin:0;font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 15%,rgba(225,29,114,.12),transparent 28%),radial-gradient(circle at 90% 8%,rgba(6,182,212,.14),transparent 30%),linear-gradient(145deg,#fff 0%,#f8fafc 44%,#fff1f5 100%)}main{width:min(1120px,calc(100% - 42px));margin:0 auto;padding:26px 0 44px}.hero{border-radius:32px;padding:34px;background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.68));box-shadow:0 24px 60px rgba(15,23,42,.12);border:1px solid rgba(255,255,255,.72)}.eyebrow{color:var(--pink);font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:10px 0 8px;font-size:38px;letter-spacing:-1.4px}.path{font-family:Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn,button{border:0;border-radius:999px;background:var(--blue);color:#fff;padding:10px 15px;text-decoration:none;font-weight:800;cursor:pointer}.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}.grid{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}.item{border:1px solid var(--line);border-radius:24px;background:var(--card);overflow:hidden;box-shadow:0 12px 34px rgba(15,23,42,.07)}.thumb{height:118px;display:grid;place-items:center;font-size:42px;text-decoration:none;background:linear-gradient(135deg,#e0f2fe,#fce7f3)}.meta{padding:12px}.name{font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sub{color:var(--muted);font-size:12px;margin-top:5px}.row{display:flex;gap:8px;margin-top:12px}.row .btn{font-size:12px;padding:7px 10px}.empty{margin-top:20px;border-radius:22px;background:#fff;padding:24px;color:var(--muted)}@media(max-width:640px){main{width:min(100% - 28px,1120px)}h1{font-size:30px}.grid{grid-template-columns:1fr}}</style></head><body><main><section class="hero"><div class="eyebrow">StaticDock Directory</div><h1>资源目录</h1><div class="path">"#,
+    );
+    body.push_str(&html_escape(current));
+    body.push_str(
+        r#"</div><div class="actions"><a class="btn ghost" href="/">资源首页</a><button onclick="navigator.clipboard&&navigator.clipboard.writeText(location.href)">复制地址</button></div></section>"#,
     );
 
-    for entry in entries {
-        let file_name = entry.file_name().to_string_lossy().into_owned();
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        let display_name = if is_dir {
-            format!("{}/", file_name)
-        } else {
-            file_name.clone()
-        };
-        let href = if is_dir {
-            format!("{}{}{}", base, percent_encode(&file_name), "/")
-        } else {
-            format!("{}{}", base, percent_encode(&file_name))
-        };
-        body.push_str("<li><a href=\"");
-        body.push_str(&html_escape(&href));
-        body.push_str("\">");
-        body.push_str(&html_escape(&display_name));
-        body.push_str("</a></li>");
+    if entries.is_empty() {
+        body.push_str("<div class=\"empty\">这个目录是空的。</div>");
+    } else {
+        body.push_str("<section class=\"grid\">");
+        for entry in entries {
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let href = if is_dir {
+                format!("{}{}{}", base, percent_encode(&file_name), "/")
+            } else {
+                format!("{}{}", base, percent_encode(&file_name))
+            };
+            let kind = entry_kind(&entry.path(), is_dir);
+            let icon = file_icon(kind);
+            let metadata = entry.metadata().ok();
+            let bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+            let display_name = if is_dir {
+                format!("{}/", file_name)
+            } else {
+                file_name.clone()
+            };
+            body.push_str("<article class=\"item\"><a class=\"thumb\" href=\"");
+            body.push_str(&html_escape(&href));
+            body.push_str("\">");
+            body.push_str(icon);
+            body.push_str("</a><div class=\"meta\"><div class=\"name\">");
+            body.push_str(&html_escape(&display_name));
+            body.push_str("</div><div class=\"sub\">");
+            body.push_str(kind);
+            body.push_str(" · ");
+            body.push_str(&format_bytes(bytes));
+            body.push_str("</div><div class=\"row\"><a class=\"btn\" href=\"");
+            body.push_str(&html_escape(&href));
+            body.push_str("\">打开</a><button class=\"ghost\" onclick=\"navigator.clipboard&&navigator.clipboard.writeText(location.origin+'");
+            body.push_str(&html_escape(&href));
+            body.push_str("')\">复制</button></div></div></article>");
+        }
+        body.push_str("</section>");
     }
-
-    body.push_str("</ul></body></html>");
+    body.push_str("</main></body></html>");
     Ok(body)
+}
+
+fn file_icon(kind: &str) -> &'static str {
+    match kind {
+        "dir" => "📁",
+        "image" => "🖼️",
+        "video" => "🎬",
+        "json" => "{}",
+        "html" => "🌐",
+        _ => "📄",
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{} {}", bytes, UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn content_type(path: &Path) -> String {

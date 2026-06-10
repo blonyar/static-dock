@@ -100,6 +100,14 @@
     .note { color:var(--muted); line-height:1.7; }
     .status { margin-top:10px; color:var(--muted); font-size:13px; }
     .error { padding:16px; color:#991b1b; background:#fee2e2; border:1px solid #fecaca; border-radius:16px; }
+    .modal { position:fixed; inset:0; background:rgba(15,23,42,.42); display:none; align-items:center; justify-content:center; padding:22px; z-index:50; backdrop-filter:blur(8px); }
+    .modal.open { display:flex; }
+    .modal-card { width:min(380px,100%); background:white; border-radius:28px; padding:24px; box-shadow:0 30px 80px rgba(15,23,42,.25); text-align:center; position:relative; }
+    .modal-card h2 { margin:0 0 8px; }
+    .modal-card p { margin:0 0 18px; color:var(--muted); line-height:1.6; }
+    .modal-card img { width:260px; height:260px; border:1px solid var(--line); border-radius:20px; background:#fff; padding:10px; }
+    .modal-card code { display:block; margin:14px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .modal-close { position:absolute; right:14px; top:14px; width:34px; height:34px; padding:0; }
     @media (max-width:900px) { .hero { grid-template-columns:1fr; } .hero-art { display:none; } .quick { grid-template-columns:1fr; } .toolbar { grid-template-columns:1fr; } .nav-links { display:none; } h1 { font-size:36px; } }
     @media (max-width:560px) { .shell { width:min(100% - 28px,1180px); } .hero-copy { padding:30px 24px 56px; } .folder-grid { grid-template-columns:1fr; } .grid { grid-template-columns:1fr; } }
   </style>
@@ -167,10 +175,20 @@
       <div class="grid" id="grid"></div>
     </section>
   </div>
+  <div class="modal" id="qrModal" onclick="if(event.target===this)closeQr()">
+    <div class="modal-card">
+      <button class="ghost modal-close" onclick="closeQr()">×</button>
+      <h2 data-i18n="qrTitle">手机访问二维码</h2>
+      <p data-i18n="qrHint">手机和电脑连接同一 Wi‑Fi 后扫码访问。</p>
+      <img id="qrImg" alt="QR Code">
+      <code id="qrUrl"></code>
+      <button onclick="copyText(document.getElementById('qrUrl').textContent)" data-i18n="copy">复制 URL</button>
+    </div>
+  </div>
 <script>
 const dict={
- zh:{home:'首页',files:'资源',share:'分享',title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，用手机扫码访问局域网资源。图片、视频、JSON 和文档都可以快速预览与分享。',scanPhone:'手机扫码',browseNow:'浏览资源',foldersTitle:'资源入口',foldersText:'常用资源目录，点击即可切换浏览。',imagesTitle:'图片',videosTitle:'视频',dataTitle:'数据',docsTitle:'文档',recentTitle:'快捷操作',recentText:'像搜索记录一样快速复制常用访问地址。',phoneTitle:'手机访问',phoneText:'电脑和手机在同一 Wi‑Fi 下，扫码打开当前资源服务。',showQr:'显示二维码',openQr:'打开手机二维码',up:'上一级',refresh:'刷新',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
- en:{home:'Home',files:'Files',share:'Share',title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and scan from your phone to open LAN resources. Images, videos, JSON, and documents are ready to preview and share.',scanPhone:'Phone QR',browseNow:'Browse Files',foldersTitle:'Resource Shortcuts',foldersText:'Jump into common resource folders.',imagesTitle:'Images',videosTitle:'Videos',dataTitle:'Data',docsTitle:'Docs',recentTitle:'Quick Actions',recentText:'Copy common access URLs like recent searches.',phoneTitle:'Phone Access',phoneText:'Keep your phone on the same Wi‑Fi and scan to open this service.',showQr:'Show QR',openQr:'Open phone QR',up:'Up',refresh:'Refresh',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
+ zh:{home:'首页',files:'资源',share:'分享',title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，用手机扫码访问局域网资源。图片、视频、JSON 和文档都可以快速预览与分享。',scanPhone:'手机扫码',browseNow:'浏览资源',foldersTitle:'资源入口',foldersText:'常用资源目录，点击即可切换浏览。',imagesTitle:'图片',videosTitle:'视频',dataTitle:'数据',docsTitle:'文档',recentTitle:'快捷操作',recentText:'像搜索记录一样快速复制常用访问地址。',phoneTitle:'手机访问',phoneText:'电脑和手机在同一 Wi‑Fi 下，扫码打开当前资源服务。',showQr:'显示二维码',openQr:'打开手机二维码',qrTitle:'手机访问二维码',qrHint:'手机和电脑连接同一 Wi‑Fi 后扫码访问。',up:'上一级',refresh:'刷新',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
+ en:{home:'Home',files:'Files',share:'Share',title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and scan from your phone to open LAN resources. Images, videos, JSON, and documents are ready to preview and share.',scanPhone:'Phone QR',browseNow:'Browse Files',foldersTitle:'Resource Shortcuts',foldersText:'Jump into common resource folders.',imagesTitle:'Images',videosTitle:'Videos',dataTitle:'Data',docsTitle:'Docs',recentTitle:'Quick Actions',recentText:'Copy common access URLs like recent searches.',phoneTitle:'Phone Access',phoneText:'Keep your phone on the same Wi‑Fi and scan to open this service.',showQr:'Show QR',openQr:'Open phone QR',qrTitle:'Phone QR Code',qrHint:'Keep your phone on the same Wi‑Fi and scan to open this service.',up:'Up',refresh:'Refresh',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
 };
 let lang=new URLSearchParams(location.search).get('lang')||localStorage.getItem('staticdock.lang')||'zh';
 if(!dict[lang]) lang='zh';
@@ -194,7 +212,8 @@ function copyText(v){
  const fail=()=>{document.getElementById('count').textContent=t('copyFail');};
  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done).catch(fail); else fail();
 }
-function openQr(v){ window.open('https://api.qrserver.com/v1/create-qr-code/?size=300x300&data='+encodeURIComponent(v),'_blank','noopener'); }
+function openQr(v){const modal=document.getElementById('qrModal');document.getElementById('qrUrl').textContent=v;document.getElementById('qrImg').src='https://api.qrserver.com/v1/create-qr-code/?size=300x300&data='+encodeURIComponent(v);modal.classList.add('open');}
+function closeQr(){document.getElementById('qrModal').classList.remove('open');}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsStr(s){return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');}
 function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
