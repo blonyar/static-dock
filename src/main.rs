@@ -271,7 +271,10 @@ fn bind_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
         }
 
         match TcpListener::bind(("0.0.0.0", port)) {
-            Ok(listener) => return Ok((listener, port)),
+            Ok(listener) => {
+                let selected_port = listener.local_addr()?.port();
+                return Ok((listener, selected_port));
+            }
             Err(err) if err.kind() == io::ErrorKind::AddrInUse => continue,
             Err(err) => return Err(err),
         }
