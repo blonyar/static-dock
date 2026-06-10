@@ -205,10 +205,10 @@ public class StaticDockForm : Form
         portBox = new NumericUpDown { Left = 88, Top = 40, Width = 90, Minimum = 1, Maximum = 65535, Value = DefaultPort };
         portBox.ValueChanged += SettingChanged; advancedPanel.Controls.Add(portBox);
         workersLabel = MakeLabel(advancedPanel, 210, 42, 100, 24);
-        workersBox = new NumericUpDown { Left = 315, Top = 40, Width = 90, Minimum = 1, Maximum = 512, Value = DefaultWorkers };
+        workersBox = new NumericUpDown { Left = 315, Top = 40, Width = 90, Minimum = 1, Maximum = 256, Value = DefaultWorkers };
         workersBox.ValueChanged += SettingChanged; advancedPanel.Controls.Add(workersBox);
         queueLabel = MakeLabel(advancedPanel, 435, 42, 100, 24);
-        queueBox = new NumericUpDown { Left = 540, Top = 40, Width = 110, Minimum = 1, Maximum = 20000, Value = DefaultQueue };
+        queueBox = new NumericUpDown { Left = 540, Top = 40, Width = 110, Minimum = 1, Maximum = 4096, Value = DefaultQueue };
         queueBox.ValueChanged += SettingChanged; advancedPanel.Controls.Add(queueBox);
 
         logBox = new TextBox { Left = 24, Top = 560, Width = 930, Height = 78, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };

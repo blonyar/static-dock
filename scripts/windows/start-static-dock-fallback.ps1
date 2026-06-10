@@ -412,6 +412,7 @@ Write-Host "Example JSON:      http://127.0.0.1:$selectedPort/loadtest/data/mani
 Write-Host "Example image:     http://127.0.0.1:$selectedPort/loadtest/images/test_image_01_1280x720.png"
 Write-Host ""
 Write-Host "No Node.js, Python, npm packages, or manual dependency install required."
+Write-Host "Fallback PowerShell server is single-client and intended for temporary use."
 Write-Host "Keep this window open while using the server. Press Ctrl+C to stop."
 Write-Host ""
 

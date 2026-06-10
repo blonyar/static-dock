@@ -155,13 +155,19 @@ StaticDock 支持普通 MP4 点播需要的能力：
 
 ## 压测
 
-仓库带有 `loadtest/` 示例数据，包含图片和 JSON。双击：
+仓库带有 `loadtest/` 示例数据，包含图片和 JSON。源码开发环境中运行：
+
+```text
+tools\loadtest\run-loadtest.bat
+```
+
+发布版 full 包根目录中可直接双击：
 
 ```text
 run-loadtest.bat
 ```
 
-脚本会临时启动服务、模拟多人并发打开页面、输出请求数、错误数、传输量和耗时，最后自动停止服务。
+脚本需要 PowerShell 7+（`pwsh.exe`），会临时启动服务、模拟多人并发打开页面、输出请求数、错误数、传输量和耗时，最后自动停止服务。
 
 如果你把 MP4 文件放到：
 

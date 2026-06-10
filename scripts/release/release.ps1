@@ -6,6 +6,7 @@ param(
     [string]$Title = "StaticDock $Version",
     [string]$NotesFile,
     [switch]$SkipPush,
+    [switch]$CreateReleaseLocally,
     [switch]$Draft,
     [switch]$Prerelease
 )
@@ -13,6 +14,10 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "../..")
 Set-Location $RepoRoot
+
+if (($Draft -or $Prerelease) -and -not $CreateReleaseLocally) {
+    throw "-Draft and -Prerelease only apply with -CreateReleaseLocally. Without it, the tag-triggered GitHub Actions workflow creates the Release using its configured defaults."
+}
 
 function Run-Step {
     param([string]$Name, [scriptblock]$Body)
@@ -109,11 +114,15 @@ if (-not $SkipPush) {
         git push origin $Version
     }
 
-    Run-Step "Create GitHub Release" {
-        $args = @('release','create',$Version,'dist/static-dock-windows-x64.zip','dist/static-dock-windows-x64-with-loadtest.zip','--title',$Title,'--notes-file',$notes)
-        if ($Draft) { $args += '--draft' }
-        if ($Prerelease) { $args += '--prerelease' }
-        gh @args
+    if ($CreateReleaseLocally) {
+        Run-Step "Create GitHub Release" {
+            $args = @('release','create',$Version,'dist/static-dock-windows-x64.zip','dist/static-dock-windows-x64-with-loadtest.zip','--title',$Title,'--notes-file',$notes)
+            if ($Draft) { $args += '--draft' }
+            if ($Prerelease) { $args += '--prerelease' }
+            gh @args
+        }
+    } else {
+        Write-Host "Tag pushed. GitHub Actions will create the Release. Use -CreateReleaseLocally to override." -ForegroundColor Yellow
     }
 }
 

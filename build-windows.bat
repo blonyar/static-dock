@@ -46,6 +46,7 @@ copy /y "package\windows\start-static-dock.bat" "%DIST%\start-static-dock.bat" >
 copy /y "package\windows\stop-static-dock.bat" "%DIST%\stop-static-dock.bat" >nul
 copy /y "README.md" "%DIST%\README.md" >nul
 copy /y "LICENSE" "%DIST%\LICENSE" >nul
+xcopy /e /i /y "assets" "%DIST%\assets" >nul
 xcopy /e /i /y "resources" "%DIST%\resources" >nul
 call :write_readme "%DIST%\使用说明.txt" "standard"
 call :clean_runtime "%DIST%"
@@ -95,6 +96,7 @@ set "MODE=%~2"
 if "%MODE%"=="full" (
   >> "%OUT%" echo.
   >> "%OUT%" echo 本包包含 loadtest\ 压测素材和 run-loadtest.bat。
+  >> "%OUT%" echo 压测脚本需要 PowerShell 7+ ^(pwsh.exe^)。
 ) else (
   >> "%OUT%" echo.
   >> "%OUT%" echo 本包是不含压测素材的普通包，体积更小。

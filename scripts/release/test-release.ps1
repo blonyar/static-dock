@@ -21,6 +21,21 @@ function Assert-Missing {
     Write-Host "[ok] absent $Path"
 }
 
+function Assert-NoForbiddenFiles {
+    param([string]$Path)
+    $forbidden = @(
+        '*.env', '*.pem', '*.key', '*.pfx', '*.log', '*.pid',
+        '.git', '.github', '.gitignore', '.gitattributes'
+    )
+    foreach ($pattern in $forbidden) {
+        $matches = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue -Filter $pattern)
+        if ($matches.Count -gt 0) {
+            throw "Forbidden release file found in $Path matching ${pattern}: $($matches[0].FullName)"
+        }
+    }
+    Write-Host "[ok] no forbidden files in $Path"
+}
+
 Assert-Missing "static-dock.exe"
 Assert-Missing "StaticDockGui.exe"
 Assert-Exists "build/windows/static-dock.exe"
@@ -40,10 +55,14 @@ Assert-Missing "$Dist/loadtest"
 Assert-Missing "$Dist/run-loadtest.bat"
 Assert-Missing "$Dist/static-dock-gui-error.log"
 Assert-Missing "$Dist/static-dock-server.pid"
+Assert-Exists "$Dist/assets/showcase.png"
+Assert-Exists "$Dist/assets/icon.png"
+Assert-NoForbiddenFiles $Dist
 
 Assert-Exists "$FullDist/loadtest"
 Assert-Exists "$FullDist/run-loadtest.bat"
 Assert-Exists "$FullDist/run-loadtest.ps1"
+Assert-NoForbiddenFiles $FullDist
 Assert-Exists "dist/static-dock-windows-x64.zip"
 Assert-Exists "dist/static-dock-windows-x64-with-loadtest.zip"
 

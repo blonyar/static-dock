@@ -3,12 +3,17 @@ setlocal
 cd /d "%~dp0"
 
 set "PIDFILE=%~dp0static-dock-server.pid"
+set "GUI_PIDFILE=%APPDATA%\StaticDock\static-dock-server.pid"
 
 if not exist "%PIDFILE%" (
-    echo StaticDock server pid file was not found.
-    echo If the server is still running, close static-dock.exe from Task Manager.
-    pause
-    exit /b 0
+    if exist "%GUI_PIDFILE%" (
+        set "PIDFILE=%GUI_PIDFILE%"
+    ) else (
+        echo StaticDock server pid file was not found.
+        echo If the server is still running, close static-dock.exe from Task Manager.
+        pause
+        exit /b 0
+    )
 )
 
 set /p PID=<"%PIDFILE%"
