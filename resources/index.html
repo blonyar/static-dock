@@ -5,77 +5,173 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StaticDock</title>
   <style>
-    :root { --blue:#1e40af; --cyan:#06b6d4; --bg:#f5f7fb; --card:#fff; --text:#111827; --muted:#64748b; --line:#dbe3ef; }
+    :root {
+      --blue:#1e40af;
+      --blue2:#2563eb;
+      --cyan:#06b6d4;
+      --pink:#be185d;
+      --pink2:#e11d72;
+      --ink:#111827;
+      --muted:#64748b;
+      --soft:#f8fafc;
+      --card:rgba(255,255,255,.88);
+      --line:rgba(148,163,184,.26);
+      --shadow:0 22px 55px rgba(15,23,42,.11);
+      --radius:26px;
+    }
     * { box-sizing:border-box; }
-    body { margin:0; font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif; background:var(--bg); color:var(--text); }
-    header { padding:28px 34px; background:linear-gradient(135deg,#1e40af,#2563eb 55%,#06b6d4); color:white; }
-    header .top { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
-    header h1 { margin:0 0 8px; font-size:30px; }
-    header p { margin:0; color:#dbeafe; }
-    select,input { border:1px solid var(--line); border-radius:10px; padding:9px 10px; background:white; }
-    header select { border:0; }
-    main { padding:24px 34px 40px; max-width:1180px; margin:auto; }
-    .toolbar,.cards,.browser { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 8px 24px rgba(15,23,42,.06); }
-    .toolbar { padding:16px; display:grid; grid-template-columns:1fr 180px 120px auto auto; gap:10px; align-items:center; margin-bottom:18px; }
-    .path { font-family:Consolas,monospace; background:#f1f5f9; border:1px solid var(--line); border-radius:10px; padding:10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-    button,a.btn { border:0; border-radius:10px; background:var(--blue); color:white; padding:10px 13px; cursor:pointer; text-decoration:none; }
-    button.secondary { background:#334155; }
-    .cards { padding:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-bottom:18px; }
-    .card { border:1px solid var(--line); border-radius:14px; padding:14px; background:#fff; }
-    .card h2 { margin:0 0 8px; font-size:17px; }
-    .card p { margin:0 0 12px; color:var(--muted); line-height:1.55; }
+    html { min-height:100%; }
+    body {
+      min-height:100%; margin:0; color:var(--ink);
+      font-family:"Microsoft YaHei UI",Inter,Segoe UI,system-ui,sans-serif;
+      background:
+        radial-gradient(circle at 8% 15%, rgba(225,29,114,.12), transparent 28%),
+        radial-gradient(circle at 90% 8%, rgba(6,182,212,.14), transparent 30%),
+        linear-gradient(145deg,#fff 0%,#f8fafc 44%,#fff1f5 100%);
+      overflow-x:hidden;
+    }
+    body::before {
+      content:""; position:fixed; inset:auto -80px -120px auto; width:620px; height:620px;
+      background:url('/assets/mascot.png') center/contain no-repeat;
+      opacity:.055; pointer-events:none; filter:saturate(.8);
+    }
+    button,a.btn { border:0; border-radius:999px; background:var(--blue); color:white; padding:10px 16px; cursor:pointer; text-decoration:none; font-weight:700; box-shadow:0 10px 24px rgba(30,64,175,.16); transition:.18s ease; display:inline-flex; align-items:center; justify-content:center; gap:7px; }
+    button:hover,a.btn:hover { transform:translateY(-1px); box-shadow:0 16px 34px rgba(30,64,175,.22); }
+    button.secondary,a.secondary { background:#334155; }
+    button.pink,a.pink { background:linear-gradient(135deg,var(--pink),var(--pink2)); box-shadow:0 12px 26px rgba(190,24,93,.25); }
+    button.ghost,a.ghost { background:white; color:var(--ink); border:1px solid var(--line); box-shadow:none; }
+    button.small,a.small { padding:7px 11px; font-size:12px; }
+    input,select { border:1px solid var(--line); border-radius:999px; padding:11px 14px; background:rgba(255,255,255,.9); outline:none; color:var(--ink); }
+    input:focus,select:focus { border-color:rgba(190,24,93,.42); box-shadow:0 0 0 4px rgba(190,24,93,.08); }
+    .shell { width:min(1180px, calc(100% - 48px)); margin:0 auto; padding:20px 0 44px; }
+    .nav { height:54px; display:flex; align-items:center; justify-content:space-between; gap:18px; }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:900; letter-spacing:.2px; }
+    .brand-mark { width:38px; height:38px; border-radius:14px; background:linear-gradient(135deg,var(--blue),var(--cyan)); color:white; display:grid; place-items:center; box-shadow:0 12px 28px rgba(37,99,235,.24); }
+    .nav-links { display:flex; align-items:center; gap:26px; color:var(--muted); font-size:14px; }
+    .nav-links a { color:inherit; text-decoration:none; }
+    .nav-links a.active { color:var(--ink); border-bottom:2px solid var(--ink); padding-bottom:6px; }
+    .lang-row { display:flex; align-items:center; gap:10px; }
+    .lang-row select { padding:8px 12px; }
+    .hero { margin-top:10px; min-height:270px; border-radius:34px; overflow:hidden; position:relative; background:linear-gradient(105deg,rgba(255,255,255,.9),rgba(255,255,255,.64)), linear-gradient(135deg,#fdf2f8 0%,#e0f2fe 100%); border:1px solid rgba(255,255,255,.72); box-shadow:var(--shadow); display:grid; grid-template-columns:1.05fr .95fr; }
+    .hero::before { content:""; position:absolute; inset:0; background:url('/assets/showcase.png') right center/auto 112% no-repeat; opacity:.24; }
+    .hero::after { content:""; position:absolute; right:-80px; bottom:-170px; width:520px; height:340px; border-radius:50%; background:linear-gradient(135deg,rgba(190,24,93,.72),rgba(225,29,114,.88)); transform:rotate(-8deg); }
+    .hero-copy { position:relative; z-index:2; padding:42px 44px; }
+    .eyebrow { color:var(--pink); font-weight:900; font-size:13px; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:12px 0 10px; font-size:44px; line-height:1.02; letter-spacing:-1.8px; }
+    .hero p { color:#334155; line-height:1.75; margin:0 0 24px; max-width:560px; font-size:15px; }
+    .hero-actions { display:flex; flex-wrap:wrap; gap:12px; }
+    .hero-art { position:relative; z-index:3; min-height:270px; }
+    .hero-art img { position:absolute; right:18px; bottom:0; max-height:285px; max-width:88%; object-fit:contain; filter:drop-shadow(0 24px 40px rgba(15,23,42,.18)); }
+    .pager { position:absolute; left:48px; bottom:22px; z-index:4; display:flex; gap:10px; }
+    .pager span { width:42px; height:5px; border-radius:999px; background:rgba(15,23,42,.24); }
+    .pager span:first-child { background:white; box-shadow:0 4px 14px rgba(15,23,42,.12); }
+    .quick { margin:22px 0; display:grid; grid-template-columns:1.1fr 1.1fr .8fr; gap:16px; }
+    .panel,.toolbar,.browser { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:0 16px 44px rgba(15,23,42,.08); backdrop-filter:blur(12px); }
+    .panel { padding:18px; }
+    .panel h2 { margin:0 0 8px; font-size:18px; letter-spacing:-.4px; }
+    .panel p { margin:0 0 14px; color:var(--muted); line-height:1.6; font-size:13px; }
+    .pill-list { display:flex; flex-direction:column; gap:8px; }
+    .pill { display:flex; align-items:center; gap:9px; border-radius:999px; padding:9px 12px; background:#f1f5f9; color:#334155; font-size:13px; overflow:hidden; }
+    .pill strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pill.pink { background:linear-gradient(135deg,var(--pink),var(--pink2)); color:white; }
+    .pill.dark { background:#1f2937; color:white; }
+    .folder-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+    .folder-card { min-height:92px; border-radius:22px; border:1px solid var(--line); background:white; padding:14px; text-decoration:none; color:var(--ink); display:flex; flex-direction:column; justify-content:space-between; transition:.18s ease; }
+    .folder-card:hover { transform:translateY(-2px); box-shadow:0 15px 32px rgba(15,23,42,.1); }
+    .folder-card .emoji { font-size:28px; }
+    .folder-card b { font-size:14px; }
+    .qr-box { display:grid; place-items:center; min-height:188px; border-radius:24px; background:linear-gradient(135deg,#fff,#fdf2f8); border:1px dashed rgba(190,24,93,.24); text-align:center; }
+    .qr-box .qr-icon { font-size:42px; margin-bottom:12px; }
+    .toolbar { padding:14px; display:grid; grid-template-columns:1fr 180px 110px 110px; gap:10px; align-items:center; margin-bottom:18px; }
+    .path { font-family:Consolas,monospace; background:#f1f5f9; border:1px solid var(--line); border-radius:999px; padding:11px 14px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
     .browser { overflow:hidden; }
-    .browser-head { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
-    .browser-head h2 { margin:0; font-size:18px; }
-    .grid { padding:16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:14px; }
-    .item { border:1px solid var(--line); border-radius:14px; background:white; overflow:hidden; min-height:160px; display:flex; flex-direction:column; }
-    .thumb { height:120px; background:#e2e8f0; display:flex; align-items:center; justify-content:center; color:#475569; font-size:38px; }
+    .browser-head { padding:18px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+    .browser-head h2 { margin:0; font-size:20px; letter-spacing:-.5px; }
+    .grid { padding:18px; display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:16px; }
+    .item { border:1px solid var(--line); border-radius:24px; background:white; overflow:hidden; min-height:176px; display:flex; flex-direction:column; box-shadow:0 10px 28px rgba(15,23,42,.055); transition:.18s ease; }
+    .item:hover { transform:translateY(-3px); box-shadow:0 18px 42px rgba(15,23,42,.11); }
+    .thumb { height:122px; background:linear-gradient(135deg,#e0f2fe,#fce7f3); display:flex; align-items:center; justify-content:center; color:#475569; font-size:40px; text-decoration:none; }
     .thumb img { width:100%; height:100%; object-fit:cover; }
-    .meta { padding:11px; }
-    .name { font-weight:700; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .meta { padding:12px; }
+    .name { font-weight:900; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
     .sub { color:var(--muted); font-size:12px; margin-top:5px; }
-    .actions { display:flex; gap:8px; margin-top:10px; }
-    .actions a,.actions button { font-size:12px; padding:7px 9px; }
-    code { background:#e2e8f0; padding:2px 6px; border-radius:6px; }
+    .actions { display:flex; gap:8px; margin-top:11px; }
+    code { background:#e2e8f0; padding:2px 6px; border-radius:7px; }
     .note { color:var(--muted); line-height:1.7; }
     .status { margin-top:10px; color:var(--muted); font-size:13px; }
-    .error { padding:16px; color:#991b1b; background:#fee2e2; border:1px solid #fecaca; border-radius:12px; }
-    @media (max-width:760px) { header,main { padding-left:16px; padding-right:16px; } header .top { flex-direction:column; } .toolbar { grid-template-columns:1fr; } }
+    .error { padding:16px; color:#991b1b; background:#fee2e2; border:1px solid #fecaca; border-radius:16px; }
+    @media (max-width:900px) { .hero { grid-template-columns:1fr; } .hero-art { display:none; } .quick { grid-template-columns:1fr; } .toolbar { grid-template-columns:1fr; } .nav-links { display:none; } h1 { font-size:36px; } }
+    @media (max-width:560px) { .shell { width:min(100% - 28px,1180px); } .hero-copy { padding:30px 24px 56px; } .folder-grid { grid-template-columns:1fr; } .grid { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
-<header>
-  <div class="top">
-    <div><h1 data-i18n="title">StaticDock 资源管理台</h1><p data-i18n="subtitle">浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。</p></div>
-    <select id="lang"><option value="zh">中文</option><option value="en">English</option></select>
+  <div class="shell">
+    <nav class="nav">
+      <div class="brand"><div class="brand-mark">⚓</div><span>StaticDock</span></div>
+      <div class="nav-links"><a class="active" href="#" data-i18n="home">首页</a><a href="#browser" data-i18n="files">资源</a><a href="#share" data-i18n="share">分享</a></div>
+      <div class="lang-row"><select id="lang"><option value="zh">中文</option><option value="en">English</option></select></div>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Resource Harbor</div>
+        <h1 data-i18n="title">StaticDock 资源管理台</h1>
+        <p data-i18n="subtitle">浏览当前挂载目录，复制资源 URL，用手机扫码访问局域网资源。图片、视频、JSON 和文档都可以快速预览与分享。</p>
+        <div class="hero-actions">
+          <button class="pink" onclick="openQr(location.origin + '/')" data-i18n="scanPhone">手机扫码</button>
+          <button onclick="copyText(location.origin + '/')" data-i18n="copyLocal">复制本机地址</button>
+          <a class="btn ghost" href="#browser" data-i18n="browseNow">浏览资源</a>
+        </div>
+        <div class="pager"><span></span><span></span><span></span></div>
+      </div>
+      <div class="hero-art"><img src="/assets/mascot.png" alt="StaticDock"></div>
+    </section>
+
+    <section class="quick" id="share">
+      <div class="panel">
+        <h2 data-i18n="foldersTitle">资源入口</h2>
+        <p data-i18n="foldersText">常用资源目录，点击即可切换浏览。</p>
+        <div class="folder-grid">
+          <a class="folder-card" href="#" onclick="loadList('/images');return false;"><span class="emoji">🖼️</span><b data-i18n="imagesTitle">图片</b></a>
+          <a class="folder-card" href="#" onclick="loadList('/videos');return false;"><span class="emoji">🎬</span><b data-i18n="videosTitle">视频</b></a>
+          <a class="folder-card" href="#" onclick="loadList('/data');return false;"><span class="emoji">{ }</span><b data-i18n="dataTitle">数据</b></a>
+          <a class="folder-card" href="#" onclick="loadList('/docs');return false;"><span class="emoji">📄</span><b data-i18n="docsTitle">文档</b></a>
+        </div>
+      </div>
+      <div class="panel">
+        <h2 data-i18n="recentTitle">快捷操作</h2>
+        <p data-i18n="recentText">像搜索记录一样快速复制常用访问地址。</p>
+        <div class="pill-list">
+          <button class="pill" onclick="copyText(location.origin + '/')">🔍 <strong id="localUrl"></strong></button>
+          <button class="pill pink" onclick="openQr(location.origin + '/')">▣ <strong data-i18n="openQr">打开手机二维码</strong></button>
+          <button class="pill dark" onclick="copyText('http://10.0.2.2:' + location.port + '/')">🤖 <strong id="emu"></strong></button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2 data-i18n="phoneTitle">手机访问</h2>
+        <p data-i18n="phoneText">电脑和手机在同一 Wi‑Fi 下，扫码打开当前资源服务。</p>
+        <div class="qr-box"><div><div class="qr-icon">▣</div><button class="pink" onclick="openQr(location.origin + '/')" data-i18n="showQr">显示二维码</button></div></div>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <div id="path" class="path">/</div>
+      <input id="search" placeholder="搜索文件名">
+      <select id="filter"><option value="all">全部类型</option><option value="dir">文件夹</option><option value="image">图片</option><option value="video">视频</option><option value="json">JSON</option><option value="file">文件</option></select>
+      <button class="secondary" onclick="goUp()" data-i18n="up">上一级</button>
+      <button onclick="loadList(currentPath)" data-i18n="refresh">刷新</button>
+    </section>
+
+    <section class="browser" id="browser">
+      <div class="browser-head"><h2 data-i18n="browser">文件浏览</h2><span class="note" id="count">加载中...</span></div>
+      <div class="grid" id="grid"></div>
+    </section>
   </div>
-</header>
-<main>
-  <section class="toolbar">
-    <div id="path" class="path">/</div>
-    <input id="search" placeholder="搜索文件名">
-    <select id="filter"><option value="all">全部类型</option><option value="dir">文件夹</option><option value="image">图片</option><option value="video">视频</option><option value="json">JSON</option><option value="file">文件</option></select>
-    <button class="secondary" onclick="goUp()" data-i18n="up">上一级</button>
-    <button onclick="loadList(currentPath)" data-i18n="refresh">刷新</button>
-  </section>
-
-  <section class="cards">
-    <div class="card"><h2 data-i18n="imagesTitle">图片</h2><p data-i18n="imagesText">封面、头像、轮播图。</p><a class="btn" href="#" onclick="loadList('/images');return false;" data-i18n="openImages">打开图片目录</a></div>
-    <div class="card"><h2 data-i18n="videosTitle">视频</h2><p data-i18n="videosText">MP4/WebM，支持拖动进度。</p><a class="btn" href="#" onclick="loadList('/videos');return false;" data-i18n="openVideos">打开视频目录</a></div>
-    <div class="card"><h2 data-i18n="dataTitle">数据</h2><p data-i18n="dataText">Mock 数据、接口配置。</p><a class="btn" href="#" onclick="loadList('/data');return false;" data-i18n="openData">打开数据目录</a></div>
-    <div class="card"><h2 data-i18n="androidTitle">安卓</h2><p><span data-i18n="emulator">模拟器地址</span>：<code id="emu"></code></p><button onclick="copyText(location.origin + '/')" data-i18n="copyLocal">复制本机地址</button></div>
-  </section>
-
-  <section class="browser">
-    <div class="browser-head"><h2 data-i18n="browser">文件浏览</h2><span class="note" id="count">加载中...</span></div>
-    <div class="grid" id="grid"></div>
-  </section>
-</main>
 <script>
-  const dict={
-   zh:{title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，预览图片、视频和 JSON。默认端口 8787。',up:'上一级',refresh:'刷新',imagesTitle:'图片',imagesText:'封面、头像、轮播图。',openImages:'打开图片目录',videosTitle:'视频',videosText:'MP4/WebM，支持拖动进度。',openVideos:'打开视频目录',dataTitle:'数据',dataText:'Mock 数据、接口配置。',openData:'打开数据目录',androidTitle:'安卓',emulator:'模拟器地址',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
-   en:{title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and preview images, videos, and JSON. Default port: 8787.',up:'Up',refresh:'Refresh',imagesTitle:'Images',imagesText:'Covers, avatars, and carousel images.',openImages:'Open Images',videosTitle:'Videos',videosText:'MP4/WebM with seek support.',openVideos:'Open Videos',dataTitle:'Data',dataText:'Mock data and API configuration.',openData:'Open Data',androidTitle:'Android',emulator:'Emulator URL',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
-  };
+const dict={
+ zh:{home:'首页',files:'资源',share:'分享',title:'StaticDock 资源管理台',subtitle:'浏览当前挂载目录，复制资源 URL，用手机扫码访问局域网资源。图片、视频、JSON 和文档都可以快速预览与分享。',scanPhone:'手机扫码',browseNow:'浏览资源',foldersTitle:'资源入口',foldersText:'常用资源目录，点击即可切换浏览。',imagesTitle:'图片',videosTitle:'视频',dataTitle:'数据',docsTitle:'文档',recentTitle:'快捷操作',recentText:'像搜索记录一样快速复制常用访问地址。',phoneTitle:'手机访问',phoneText:'电脑和手机在同一 Wi‑Fi 下，扫码打开当前资源服务。',showQr:'显示二维码',openQr:'打开手机二维码',up:'上一级',refresh:'刷新',copyLocal:'复制本机地址',browser:'文件浏览',loading:'加载中...',items:' 个项目',empty:'这个目录是空的。把文件放进对应文件夹后点刷新。',open:'打开',copy:'复制 URL',dir:'文件夹',image:'图片',video:'视频',json:'JSON',html:'网页',file:'文件',all:'全部类型',search:'搜索文件名',copied:'已复制 URL',copyFail:'复制失败，请手动复制',loadFail:'目录加载失败，请确认服务仍在运行，或该目录存在。'},
+ en:{home:'Home',files:'Files',share:'Share',title:'StaticDock Resource Manager',subtitle:'Browse the mounted folder, copy resource URLs, and scan from your phone to open LAN resources. Images, videos, JSON, and documents are ready to preview and share.',scanPhone:'Phone QR',browseNow:'Browse Files',foldersTitle:'Resource Shortcuts',foldersText:'Jump into common resource folders.',imagesTitle:'Images',videosTitle:'Videos',dataTitle:'Data',docsTitle:'Docs',recentTitle:'Quick Actions',recentText:'Copy common access URLs like recent searches.',phoneTitle:'Phone Access',phoneText:'Keep your phone on the same Wi‑Fi and scan to open this service.',showQr:'Show QR',openQr:'Open phone QR',up:'Up',refresh:'Refresh',copyLocal:'Copy local URL',browser:'File Browser',loading:'Loading...',items:' items',empty:'This folder is empty. Add files and click Refresh.',open:'Open',copy:'Copy URL',dir:'Folder',image:'Image',video:'Video',json:'JSON',html:'HTML',file:'File',all:'All types',search:'Search file name',copied:'URL copied',copyFail:'Copy failed. Please copy manually.',loadFail:'Failed to load this folder. Check that the server is running and the folder exists.'}
+};
 let lang=new URLSearchParams(location.search).get('lang')||localStorage.getItem('staticdock.lang')||'zh';
 if(!dict[lang]) lang='zh';
 let currentPath='/', currentEntries=[];
@@ -84,13 +180,23 @@ langBox.value=lang;
 langBox.onchange=()=>{lang=langBox.value;localStorage.setItem('staticdock.lang',lang);applyLang();renderEntries();};
 search.oninput=renderEntries; filter.onchange=renderEntries;
 function t(k){return dict[lang][k]||k;}
-function applyLang(){document.documentElement.lang=lang==='en'?'en':'zh-CN';document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.title=t('title');document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';search.placeholder=t('search');filter.options[0].text=t('all');filter.options[1].text=t('dir');filter.options[2].text=t('image');filter.options[3].text=t('video');filter.options[4].text=t('json');filter.options[5].text=t('file');}
+function applyLang(){
+ document.documentElement.lang=lang==='en'?'en':'zh-CN';
+ document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));
+ document.title=t('title');
+ document.getElementById('emu').textContent='http://10.0.2.2:'+location.port+'/';
+ document.getElementById('localUrl').textContent=location.origin+'/';
+ search.placeholder=t('search');
+ filter.options[0].text=t('all');filter.options[1].text=t('dir');filter.options[2].text=t('image');filter.options[3].text=t('video');filter.options[4].text=t('json');filter.options[5].text=t('file');
+}
 function copyText(v){
  const done=()=>{document.getElementById('count').textContent=t('copied');};
  const fail=()=>{document.getElementById('count').textContent=t('copyFail');};
  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done).catch(fail); else fail();
 }
+function openQr(v){ window.open('https://api.qrserver.com/v1/create-qr-code/?size=300x300&data='+encodeURIComponent(v),'_blank','noopener'); }
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function jsStr(s){return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');}
 function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
 function icon(k){return k==='dir'?'📁':k==='image'?'🖼️':k==='video'?'🎬':k==='json'?'{}':'📄';}
 function kindName(k){return t(k)||k;}
@@ -114,7 +220,7 @@ function renderEntries(){
  if(f!=='all')entries=entries.filter(e=>e.kind===f||(f==='file'&&!['dir','image','video','json','html'].includes(e.kind)));
  document.getElementById('count').textContent=entries.length+(lang==='en'?t('items'):t('items'));
  if(!entries.length){grid.innerHTML='<div class="note">'+t('empty')+'</div>';return;}
- grid.innerHTML=entries.map(e=>{const url=e.url;const th=e.kind==='image'?`<img src="${esc(url)}" loading="lazy">`:icon(e.kind);const open=e.kind==='dir'?`loadList('${esc(url)}');return false;`:'';return `<div class="item"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div><div class="actions"><a class="btn" href="${esc(url)}">${t('open')}</a><button onclick="copyText(location.origin+'${esc(url)}')">${t('copy')}</button></div></div></div>`;}).join('');
+ grid.innerHTML=entries.map(e=>{const url=e.url;const th=e.kind==='image'?`<img src="${esc(url)}" loading="lazy">`:icon(e.kind);const open=e.kind==='dir'?`loadList('${jsStr(url)}');return false;`:'';return `<div class="item"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div><div class="actions"><a class="btn small" href="${esc(url)}">${t('open')}</a><button class="ghost small" onclick="copyText(location.origin+'${jsStr(url)}')">${t('copy')}</button></div></div></div>`;}).join('');
 }
 applyLang();loadList('/');
 </script>
