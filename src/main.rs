@@ -9,6 +9,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use qrcodegen::{QrCode, QrCodeEcc};
+
 const COPY_BUFFER_SIZE: usize = 256 * 1024;
 const WORKER_STACK_SIZE: usize = 512 * 1024;
 const MAX_WORKERS: usize = 256;
@@ -801,285 +803,25 @@ fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Res
 }
 
 fn qr_svg(text: &str) -> Option<String> {
-    let modules = qr_matrix_v5_l(text.as_bytes())?;
-    let border = 4usize;
-    let size = modules.len() + border * 2;
+    if text.len() > 512 {
+        return None;
+    }
+    let qr = QrCode::encode_text(text, QrCodeEcc::Low).ok()?;
+    let qr_size = qr.size();
+    let border = 4;
+    let size = qr_size + border * 2;
     let mut svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path fill=\"#111827\" d=\""
     );
-    for (y, row) in modules.iter().enumerate() {
-        for (x, dark) in row.iter().enumerate() {
-            if *dark {
+    for y in 0..qr_size {
+        for x in 0..qr_size {
+            if qr.get_module(x, y) {
                 svg.push_str(&format!("M{} {}h1v1h-1z", x + border, y + border));
             }
         }
     }
     svg.push_str("\"/></svg>");
     Some(svg)
-}
-
-fn qr_matrix_v5_l(data: &[u8]) -> Option<Vec<Vec<bool>>> {
-    const VERSION: usize = 5;
-    const SIZE: usize = 37;
-    const DATA_CODEWORDS: usize = 108;
-    const ECC_CODEWORDS: usize = 26;
-    if data.len() > 106 {
-        return None;
-    }
-
-    let mut bits = Vec::new();
-    append_bits(&mut bits, 0b0100, 4);
-    append_bits(&mut bits, data.len() as u32, 8);
-    for b in data {
-        append_bits(&mut bits, *b as u32, 8);
-    }
-    let capacity = DATA_CODEWORDS * 8;
-    let terminator = 4usize.min(capacity.saturating_sub(bits.len()));
-    bits.extend(std::iter::repeat_n(false, terminator));
-    while bits.len() % 8 != 0 {
-        bits.push(false);
-    }
-    let mut codewords = bits_to_bytes(&bits);
-    let pads = [0xec, 0x11];
-    let mut i = 0usize;
-    while codewords.len() < DATA_CODEWORDS {
-        codewords.push(pads[i % 2]);
-        i += 1;
-    }
-    let ecc = reed_solomon_ecc(&codewords, ECC_CODEWORDS);
-    codewords.extend(ecc);
-
-    let mut modules = vec![vec![false; SIZE]; SIZE];
-    let mut reserved = vec![vec![false; SIZE]; SIZE];
-    draw_function_patterns(&mut modules, &mut reserved, VERSION);
-
-    let mut bit_index = 0usize;
-    let total_bits = codewords.len() * 8;
-    let mut x = SIZE as i32 - 1;
-    let mut upward = true;
-    while x > 0 {
-        if x == 6 {
-            x -= 1;
-        }
-        for i in 0..SIZE {
-            let y = if upward { SIZE - 1 - i } else { i };
-            for dx in 0..2 {
-                let xx = (x - dx) as usize;
-                if reserved[y][xx] {
-                    continue;
-                }
-                let mut dark = if bit_index < total_bits {
-                    ((codewords[bit_index / 8] >> (7 - (bit_index % 8))) & 1) != 0
-                } else {
-                    false
-                };
-                bit_index += 1;
-                if (xx + y).is_multiple_of(2) {
-                    dark = !dark;
-                }
-                modules[y][xx] = dark;
-            }
-        }
-        upward = !upward;
-        x -= 2;
-    }
-    draw_format_bits(&mut modules, &mut reserved, 0);
-    Some(modules)
-}
-
-fn append_bits(bits: &mut Vec<bool>, value: u32, len: usize) {
-    for i in (0..len).rev() {
-        bits.push(((value >> i) & 1) != 0);
-    }
-}
-
-fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
-    bits.chunks(8)
-        .map(|chunk| {
-            let mut byte = 0u8;
-            for bit in chunk {
-                byte = (byte << 1) | u8::from(*bit);
-            }
-            byte << (8 - chunk.len())
-        })
-        .collect()
-}
-
-fn draw_function_patterns(modules: &mut [Vec<bool>], reserved: &mut [Vec<bool>], version: usize) {
-    let size = modules.len();
-    draw_finder(modules, reserved, 0, 0);
-    draw_finder(modules, reserved, size - 7, 0);
-    draw_finder(modules, reserved, 0, size - 7);
-    for i in 0..size {
-        if !reserved[6][i] {
-            modules[6][i] = i % 2 == 0;
-            reserved[6][i] = true;
-        }
-        if !reserved[i][6] {
-            modules[i][6] = i % 2 == 0;
-            reserved[i][6] = true;
-        }
-    }
-    let centers = alignment_centers(version);
-    for &cy in &centers {
-        for &cx in &centers {
-            if reserved[cy][cx] {
-                continue;
-            }
-            draw_alignment(modules, reserved, cx, cy);
-        }
-    }
-    modules[size - 8][8] = true;
-    reserved[size - 8][8] = true;
-    reserved[8][..9].fill(true);
-    for row in reserved.iter_mut().take(9) {
-        row[8] = true;
-    }
-    for i in 0..8 {
-        reserved[8][size - 1 - i] = true;
-        reserved[size - 1 - i][8] = true;
-    }
-}
-
-fn draw_finder(modules: &mut [Vec<bool>], reserved: &mut [Vec<bool>], x: usize, y: usize) {
-    let size = modules.len();
-    for dy in 0..9 {
-        for dx in 0..9 {
-            let xx = x as isize + dx as isize - 1;
-            let yy = y as isize + dy as isize - 1;
-            if xx < 0 || yy < 0 || xx >= size as isize || yy >= size as isize {
-                continue;
-            }
-            let xx = xx as usize;
-            let yy = yy as usize;
-            let dark = (1..=7).contains(&dx)
-                && (1..=7).contains(&dy)
-                && (dx == 1
-                    || dx == 7
-                    || dy == 1
-                    || dy == 7
-                    || ((3..=5).contains(&dx) && (3..=5).contains(&dy)));
-            modules[yy][xx] = dark;
-            reserved[yy][xx] = true;
-        }
-    }
-}
-
-fn draw_alignment(modules: &mut [Vec<bool>], reserved: &mut [Vec<bool>], cx: usize, cy: usize) {
-    for dy in 0..5 {
-        for dx in 0..5 {
-            let xx = cx + dx - 2;
-            let yy = cy + dy - 2;
-            let dark = dx == 0 || dx == 4 || dy == 0 || dy == 4 || (dx == 2 && dy == 2);
-            modules[yy][xx] = dark;
-            reserved[yy][xx] = true;
-        }
-    }
-}
-
-fn alignment_centers(version: usize) -> Vec<usize> {
-    match version {
-        5 => vec![6, 30],
-        _ => vec![],
-    }
-}
-
-fn draw_format_bits(modules: &mut [Vec<bool>], _reserved: &mut [Vec<bool>], mask: u8) {
-    let size = modules.len();
-    let data = (1u16 << 3) | mask as u16; // ECC level L, mask pattern
-    let mut rem = data << 10;
-    for i in (10..=14).rev() {
-        if ((rem >> i) & 1) != 0 {
-            rem ^= 0x537 << (i - 10);
-        }
-    }
-    let bits = ((data << 10) | rem) ^ 0x5412;
-    let coords1 = [
-        (8, 0),
-        (8, 1),
-        (8, 2),
-        (8, 3),
-        (8, 4),
-        (8, 5),
-        (8, 7),
-        (8, 8),
-        (7, 8),
-        (5, 8),
-        (4, 8),
-        (3, 8),
-        (2, 8),
-        (1, 8),
-        (0, 8),
-    ];
-    let coords2 = [
-        (size - 1, 8),
-        (size - 2, 8),
-        (size - 3, 8),
-        (size - 4, 8),
-        (size - 5, 8),
-        (size - 6, 8),
-        (size - 7, 8),
-        (8, size - 8),
-        (8, size - 7),
-        (8, size - 6),
-        (8, size - 5),
-        (8, size - 4),
-        (8, size - 3),
-        (8, size - 2),
-        (8, size - 1),
-    ];
-    for i in 0..15 {
-        let dark = ((bits >> i) & 1) != 0;
-        let (x1, y1) = coords1[i];
-        modules[y1][x1] = dark;
-        let (x2, y2) = coords2[i];
-        modules[y2][x2] = dark;
-    }
-}
-
-fn reed_solomon_ecc(data: &[u8], degree: usize) -> Vec<u8> {
-    let generator = rs_generator(degree);
-    let mut result = vec![0u8; degree];
-    for &byte in data {
-        let factor = byte ^ result[0];
-        result.remove(0);
-        result.push(0);
-        for (r, &g) in result.iter_mut().zip(generator.iter()) {
-            *r ^= gf_mul(g, factor);
-        }
-    }
-    result
-}
-
-fn rs_generator(degree: usize) -> Vec<u8> {
-    let mut result = vec![1u8];
-    let mut root = 1u8;
-    for _ in 0..degree {
-        let mut next = vec![0u8; result.len() + 1];
-        for (i, &coef) in result.iter().enumerate() {
-            next[i] ^= gf_mul(coef, root);
-            next[i + 1] ^= coef;
-        }
-        result = next;
-        root = gf_mul(root, 0x02);
-    }
-    result
-}
-
-fn gf_mul(mut x: u8, mut y: u8) -> u8 {
-    let mut z = 0u8;
-    while y != 0 {
-        if y & 1 != 0 {
-            z ^= x;
-        }
-        let carry = x & 0x80 != 0;
-        x <<= 1;
-        if carry {
-            x ^= 0x1d;
-        }
-        y >>= 1;
-    }
-    z
 }
 
 fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool) -> io::Result<()> {
@@ -1319,7 +1061,7 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
     };
     let mut body = String::from(
         r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StaticDock resources</title><style>
-:root{--blue:#1e40af;--pink:#be185d;--ink:#111827;--muted:#64748b;--line:rgba(148,163,184,.28);--card:rgba(255,255,255,.9)}*{box-sizing:border-box}body{margin:0;font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 15%,rgba(225,29,114,.12),transparent 28%),radial-gradient(circle at 90% 8%,rgba(6,182,212,.14),transparent 30%),linear-gradient(145deg,#fff 0%,#f8fafc 44%,#fff1f5 100%)}main{width:min(1120px,calc(100% - 42px));margin:0 auto;padding:26px 0 44px}.hero{border-radius:32px;padding:34px;background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.68));box-shadow:0 24px 60px rgba(15,23,42,.12);border:1px solid rgba(255,255,255,.72)}.eyebrow{color:var(--pink);font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:10px 0 8px;font-size:38px;letter-spacing:-1.4px}.path{font-family:Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn,button{border:0;border-radius:999px;background:var(--blue);color:#fff;padding:10px 15px;text-decoration:none;font-weight:800;cursor:pointer}.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}.grid{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}.item{border:1px solid var(--line);border-radius:24px;background:var(--card);overflow:hidden;box-shadow:0 12px 34px rgba(15,23,42,.07)}.thumb{height:132px;display:grid;place-items:center;font-size:42px;text-decoration:none;background:linear-gradient(135deg,#e0f2fe,#fce7f3);overflow:hidden}.thumb img,.thumb video{width:100%;height:100%;object-fit:cover}.file-icon{width:74px;height:74px;border-radius:24px;display:grid;place-items:center;font-size:34px;background:rgba(255,255,255,.72);box-shadow:inset 0 0 0 1px rgba(255,255,255,.8),0 12px 28px rgba(15,23,42,.08)}.archive{background:#fef3c7}.app{background:#dbeafe}.doc{background:#e0e7ff}.pdf{background:#fee2e2}.audio{background:#dcfce7}.code{background:#e0f2fe}.json{background:#f3e8ff}.meta{padding:12px}.name{font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.info-row{margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px}.kind-badge{max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:999px;padding:4px 8px;background:#f1f5f9;color:#475569;font-size:11px;font-weight:800}.size{color:var(--muted);font-size:12px;white-space:nowrap}.empty{margin-top:20px;border-radius:22px;background:#fff;padding:24px;color:var(--muted)}.ctx{position:fixed;z-index:20;display:none;min-width:150px;padding:8px;border:1px solid var(--line);border-radius:16px;background:white;box-shadow:0 20px 50px rgba(15,23,42,.2)}.ctx.open{display:block}.ctx button{display:block;width:100%;text-align:left;background:white;color:var(--ink);box-shadow:none;border-radius:10px;padding:9px 11px}.modal{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;padding:22px;z-index:30;backdrop-filter:blur(8px)}.modal.open{display:flex}.modal-card{width:min(920px,100%);max-height:min(86vh,820px);overflow:auto;background:white;border-radius:28px;padding:24px;box-shadow:0 30px 80px rgba(15,23,42,.25);position:relative}.modal-close{position:absolute;right:14px;top:14px;width:34px;height:34px;padding:0}.preview-body{display:grid;place-items:center;min-height:220px;border-radius:22px;background:#f8fafc;border:1px solid var(--line);overflow:hidden}.preview-body img,.preview-body video,.preview-body iframe{max-width:100%;width:100%;max-height:68vh;object-fit:contain;border:0;background:#fff}.preview-body audio{width:min(680px,100%);margin:42px}.preview-body pre{width:100%;max-height:68vh;margin:0;overflow:auto;padding:18px;font:13px/1.55 Consolas,monospace;white-space:pre-wrap}@media(max-width:640px){main{width:min(100% - 28px,1120px)}h1{font-size:30px}.grid{grid-template-columns:1fr}}</style></head><body><main><section class="hero"><div class="eyebrow">StaticDock Directory</div><h1>资源目录</h1><div class="path">"#,
+:root{--blue:#1e40af;--pink:#be185d;--ink:#111827;--muted:#64748b;--line:rgba(148,163,184,.28);--card:rgba(255,255,255,.9)}*{box-sizing:border-box}body{margin:0;font-family:"Microsoft YaHei UI",Segoe UI,system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 15%,rgba(225,29,114,.12),transparent 28%),radial-gradient(circle at 90% 8%,rgba(6,182,212,.14),transparent 30%),linear-gradient(145deg,#fff 0%,#f8fafc 44%,#fff1f5 100%)}main{width:min(1120px,calc(100% - 42px));margin:0 auto;padding:26px 0 44px}.hero{border-radius:32px;padding:34px;background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.68));box-shadow:0 24px 60px rgba(15,23,42,.12);border:1px solid rgba(255,255,255,.72)}.eyebrow{color:var(--pink);font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:10px 0 8px;font-size:38px;letter-spacing:-1.4px}.path{font-family:Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn,button{border:0;border-radius:999px;background:var(--blue);color:#fff;padding:10px 15px;text-decoration:none;font-weight:800;cursor:pointer}.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}.grid{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}.item{border:1px solid var(--line);border-radius:24px;background:var(--card);overflow:hidden;box-shadow:0 12px 34px rgba(15,23,42,.07)}.thumb{height:132px;display:grid;place-items:center;font-size:42px;text-decoration:none;background:linear-gradient(135deg,#e0f2fe,#fce7f3);overflow:hidden}.thumb img,.thumb video{width:100%;height:100%;object-fit:cover}.file-icon{width:74px;height:74px;border-radius:24px;display:grid;place-items:center;font-size:34px;background:rgba(255,255,255,.72);box-shadow:inset 0 0 0 1px rgba(255,255,255,.8),0 12px 28px rgba(15,23,42,.08)}.archive{background:#fef3c7}.app{background:#dbeafe}.doc{background:#e0e7ff}.pdf{background:#fee2e2}.audio{background:#dcfce7}.code{background:#e0f2fe}.json{background:#f3e8ff}.meta{padding:12px}.name{font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.info-row{margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px}.kind-badge{max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:999px;padding:4px 8px;background:#f1f5f9;color:#475569;font-size:11px;font-weight:800}.size{color:var(--muted);font-size:12px;white-space:nowrap}.empty{margin-top:20px;border-radius:22px;background:#fff;padding:24px;color:var(--muted)}.ctx{position:fixed;z-index:20;display:none;min-width:150px;padding:8px;border:1px solid var(--line);border-radius:16px;background:white;box-shadow:0 20px 50px rgba(15,23,42,.2)}.ctx.open{display:block}.ctx button{display:block;width:100%;text-align:left;background:white;color:var(--ink);box-shadow:none;border-radius:10px;padding:9px 11px}.modal{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;padding:22px;z-index:30;backdrop-filter:blur(8px)}.modal.open{display:flex}.modal-card{width:min(920px,100%);max-height:min(86vh,820px);overflow:auto;background:white;border-radius:28px;padding:24px;box-shadow:0 30px 80px rgba(15,23,42,.25);position:relative}.modal-close{position:absolute;right:14px;top:14px;width:34px;height:34px;padding:0}.preview-body{display:grid;place-items:center;min-height:220px;border-radius:22px;background:#f8fafc;border:1px solid var(--line);overflow:hidden}.preview-body img,.preview-body video,.preview-body iframe{max-width:100%;width:100%;height:68vh;max-height:68vh;object-fit:contain;border:0;background:#fff}.preview-body audio{width:min(680px,100%);margin:42px}.preview-body pre{width:100%;max-height:68vh;margin:0;overflow:auto;padding:18px;font:13px/1.55 Consolas,monospace;white-space:pre-wrap}@media(max-width:640px){main{width:min(100% - 28px,1120px)}h1{font-size:30px}.grid{grid-template-columns:1fr}}</style></head><body><main><section class="hero"><div class="eyebrow">StaticDock Directory</div><h1>资源目录</h1><div class="path">"#,
     );
     body.push_str(&html_escape(current));
     body.push_str(r#"</div><div class="actions"><a class="btn ghost" href="/">资源首页</a><button onclick="navigator.clipboard&&navigator.clipboard.writeText(location.href)">复制当前地址</button></div></section>"#);
@@ -1375,7 +1117,7 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
         }
         body.push_str("</section>");
     }
-    body.push_str(r#"<div class="ctx" id="ctx"><button onclick="previewCtx()">预览/播放</button><button onclick="openCtx()">打开</button><button onclick="openNewCtx()">新标签打开</button><button onclick="downloadCtx()">下载</button><button onclick="copyCtx()">复制 URL</button></div><div class="modal" id="previewModal" onclick="if(event.target===this)closePreview()"><div class="modal-card"><button class="ghost modal-close" onclick="closePreview()">×</button><h2 id="previewTitle">Preview</h2><div class="preview-body" id="previewBody"></div></div></div><script>let ctx='',ctxKind='file',ctxName='',ctxIsDir=false;function showCtx(e,u,k,n,d){e.preventDefault();ctx=u;ctxKind=k;ctxName=n||u;ctxIsDir=d;const m=document.getElementById('ctx');m.style.left=Math.min(e.clientX,innerWidth-170)+'px';m.style.top=Math.min(e.clientY,innerHeight-100)+'px';m.classList.add('open')}function hideCtx(){document.getElementById('ctx').classList.remove('open')}function previewCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openCtx(){hideCtx();location.href=ctx}function openNewCtx(){hideCtx();window.open(ctx,'_blank','noopener')}function downloadCtx(){hideCtx();const a=document.createElement('a');a.href=ctx;a.download=ctxName||'';document.body.appendChild(a);a.click();a.remove()}function copyCtx(){hideCtx();navigator.clipboard&&navigator.clipboard.writeText(location.origin+ctx)}function esc(s){return(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}async function previewFile(url,kind,name){const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='加载中...';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src="'+esc(url)+'">';else if(kind==='video')body.innerHTML='<video src="'+esc(url)+'" controls autoplay></video>';else if(kind==='audio')body.innerHTML='<audio src="'+esc(url)+'" controls autoplay></audio>';else if(kind==='pdf')body.innerHTML='<iframe src="'+esc(url)+'"></iframe>';else if(['json','code','html','file'].includes(kind)){try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>'}catch(e){location.href=url}}else location.href=url}function closePreview(){document.getElementById('previewModal').classList.remove('open');document.getElementById('previewBody').innerHTML=''}document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closePreview()}});</script></main></body></html>"#);
+    body.push_str(r#"<div class="ctx" id="ctx"><button onclick="previewCtx()">预览/播放</button><button onclick="openCtx()">打开</button><button onclick="openNewCtx()">新标签打开</button><button onclick="downloadCtx()">下载</button><button onclick="copyCtx()">复制 URL</button></div><div class="modal" id="previewModal" onclick="if(event.target===this)closePreview()"><div class="modal-card"><button class="ghost modal-close" onclick="closePreview()">×</button><h2 id="previewTitle">Preview</h2><div class="preview-body" id="previewBody"></div></div></div><script>let ctx='',ctxKind='file',ctxName='',ctxIsDir=false;function showCtx(e,u,k,n,d){e.preventDefault();ctx=u;ctxKind=k;ctxName=n||u;ctxIsDir=d;const m=document.getElementById('ctx');m.style.left=Math.min(e.clientX,innerWidth-170)+'px';m.style.top=Math.min(e.clientY,innerHeight-100)+'px';m.classList.add('open')}function hideCtx(){document.getElementById('ctx').classList.remove('open')}function previewCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openNewCtx(){hideCtx();window.open(ctx,'_blank','noopener')}function downloadCtx(){hideCtx();const a=document.createElement('a');a.href=ctx;a.download=ctxName||'';document.body.appendChild(a);a.click();a.remove()}function copyCtx(){hideCtx();navigator.clipboard&&navigator.clipboard.writeText(location.origin+ctx)}function esc(s){return(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}async function previewFile(url,kind,name){const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='加载中...';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src="'+esc(url)+'">';else if(kind==='video')body.innerHTML='<video src="'+esc(url)+'" controls autoplay></video>';else if(kind==='audio')body.innerHTML='<audio src="'+esc(url)+'" controls autoplay></audio>';else if(kind==='pdf')body.innerHTML='<iframe src="'+esc(url)+'"></iframe>';else if(['json','code','html','file'].includes(kind)){try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>'}catch(e){location.href=url}}else body.innerHTML='<div style="padding:24px;text-align:center"><p>此类型不支持直接预览。</p><p><a class="btn" href="'+esc(url)+'" target="_blank">新标签打开</a> <a class="btn ghost" href="'+esc(url)+'" download>下载</a></p></div>'}function closePreview(){document.getElementById('previewModal').classList.remove('open');document.getElementById('previewBody').innerHTML=''}document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closePreview()}});</script></main></body></html>"#);
     Ok(body)
 }
 

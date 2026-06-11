@@ -8,3 +8,6 @@ license = "MIT"
 [[bin]]
 name = "static-dock"
 path = "src/main.rs"
+
+[dependencies]
+qrcodegen = "1.8"

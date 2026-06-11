@@ -120,7 +120,7 @@
     .preview-head { padding-right:42px; margin-bottom:14px; }
     .preview-title { margin:0; font-size:20px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .preview-body { display:grid; place-items:center; min-height:220px; border-radius:22px; background:#f8fafc; border:1px solid var(--line); overflow:hidden; }
-    .preview-body img,.preview-body video,.preview-body iframe { max-width:100%; width:100%; max-height:68vh; object-fit:contain; border:0; background:#fff; }
+    .preview-body img,.preview-body video,.preview-body iframe { max-width:100%; width:100%; height:68vh; max-height:68vh; object-fit:contain; border:0; background:#fff; }
     .preview-body audio { width:min(680px,100%); margin:42px; }
     .preview-body pre { width:100%; max-height:68vh; margin:0; overflow:auto; padding:18px; font:13px/1.55 Consolas,monospace; white-space:pre-wrap; color:#0f172a; }
     @media (max-width:900px) { .hero { grid-template-columns:1fr; } .hero-art { display:none; } .quick { grid-template-columns:1fr; } .toolbar { grid-template-columns:1fr; } .nav-links { display:none; } h1 { font-size:36px; } }
@@ -244,7 +244,7 @@ function copyText(v){
 function openQr(v){const modal=document.getElementById('qrModal');document.getElementById('qrUrl').textContent=v;document.getElementById('qrImg').src='/__staticdock/api/qr?text='+encodeURIComponent(v);modal.classList.add('open');}
 function closeQr(){document.getElementById('qrModal').classList.remove('open');}
 function canPreview(k){return ['image','video','audio','json','code','html','pdf','file'].includes(k);}
-async function previewFile(url,kind,name){if(!canPreview(kind)){location.href=url;return;}const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='<div class=\"note\">'+t('loading')+'</div>';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src=\"'+esc(url)+'\">';else if(kind==='video')body.innerHTML='<video src=\"'+esc(url)+'\" controls autoplay></video>';else if(kind==='audio')body.innerHTML='<audio src=\"'+esc(url)+'\" controls autoplay></audio>';else if(kind==='pdf')body.innerHTML='<iframe src=\"'+esc(url)+'\"></iframe>';else{try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>';}catch(e){body.innerHTML='<div class=\"error\">Preview failed. <a href=\"'+esc(url)+'\">Open file</a></div>';}}}
+async function previewFile(url,kind,name){const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='<div class=\"note\">'+t('loading')+'</div>';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src=\"'+esc(url)+'\">';else if(kind==='video')body.innerHTML='<video src=\"'+esc(url)+'\" controls autoplay></video>';else if(kind==='audio')body.innerHTML='<audio src=\"'+esc(url)+'\" controls autoplay></audio>';else if(kind==='pdf')body.innerHTML='<iframe src=\"'+esc(url)+'\"></iframe>';else{try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>';}catch(e){body.innerHTML='<div class=\"error\">Preview failed. <a href=\"'+esc(url)+'\">Open file</a></div>';}}}
 function closePreview(){document.getElementById('previewModal').classList.remove('open');document.getElementById('previewBody').innerHTML='';}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsStr(s){return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');}
@@ -276,7 +276,7 @@ function renderEntries(){
 let ctxUrl='',ctxKind='file',ctxName='',ctxIsDir=false;function showCtx(ev,url,kind,name,isDir){ev.preventDefault();ctxUrl=url;ctxKind=kind;ctxName=name||url;ctxIsDir=isDir;const m=document.getElementById('ctx');m.style.left=Math.min(ev.clientX,innerWidth-190)+'px';m.style.top=Math.min(ev.clientY,innerHeight-210)+'px';m.classList.add('open');}
 function hideCtx(){document.getElementById('ctx').classList.remove('open');}
 function ctxPreview(){hideCtx();if(ctxIsDir)loadList(ctxUrl);else previewFile(ctxUrl,ctxKind,ctxName);}
-function ctxOpen(){hideCtx();if(ctxIsDir)loadList(ctxUrl);else location.href=ctxUrl;}
+function ctxOpen(){hideCtx();if(ctxIsDir)loadList(ctxUrl);else previewFile(ctxUrl,ctxKind,ctxName);}
 function ctxOpenNew(){hideCtx();window.open(ctxUrl,'_blank','noopener');}
 function ctxDownload(){hideCtx();const a=document.createElement('a');a.href=ctxUrl;a.download=ctxName||'';document.body.appendChild(a);a.click();a.remove();}
 function ctxCopy(){hideCtx();copyText(location.origin+ctxUrl);}
