@@ -2,6 +2,34 @@
 
 All notable changes to StaticDock are documented here.
 
+## v0.2.6
+
+### Highlights
+
+- Fixed phone QR code loading in the native Windows GUI by serving a WinForms-compatible BMP QR endpoint while keeping SVG QR output for browsers.
+- Improved the WebUI resource manager with modal-first preview/open behavior, richer file-type icons, and right-click actions for preview, new-tab open, download, and URL copy.
+- Improved video, audio, and PDF preview handling with embedded controls and clear fallback guidance when the browser cannot decode a file inline.
+- Rebuilt and validated the Windows standard and loadtest packages.
+
+### Packages
+
+- `static-dock-windows-x64.zip`: recommended for most users; smaller package without loadtest assets.
+- `static-dock-windows-x64-with-loadtest.zip`: includes loadtest assets and scripts for local stress testing.
+
+### Quick start
+
+Extract the package, then double-click:
+
+```text
+start-static-dock-gui.bat
+```
+
+Default URL:
+
+```text
+http://127.0.0.1:8787/
+```
+
 ## v0.2.5
 
 ### Highlights
