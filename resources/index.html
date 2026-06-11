@@ -114,6 +114,13 @@
     .modal-card img { width:260px; height:260px; border:1px solid var(--line); border-radius:20px; background:#fff; padding:10px; }
     .modal-card code { display:block; margin:14px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .modal-close { position:absolute; right:14px; top:14px; width:34px; height:34px; padding:0; }
+    .preview-card { width:min(920px,100%); max-height:min(86vh,820px); overflow:auto; text-align:left; }
+    .preview-head { padding-right:42px; margin-bottom:14px; }
+    .preview-title { margin:0; font-size:20px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .preview-body { display:grid; place-items:center; min-height:220px; border-radius:22px; background:#f8fafc; border:1px solid var(--line); overflow:hidden; }
+    .preview-body img,.preview-body video,.preview-body iframe { max-width:100%; width:100%; max-height:68vh; object-fit:contain; border:0; background:#fff; }
+    .preview-body audio { width:min(680px,100%); margin:42px; }
+    .preview-body pre { width:100%; max-height:68vh; margin:0; overflow:auto; padding:18px; font:13px/1.55 Consolas,monospace; white-space:pre-wrap; color:#0f172a; }
     @media (max-width:900px) { .hero { grid-template-columns:1fr; } .hero-art { display:none; } .quick { grid-template-columns:1fr; } .toolbar { grid-template-columns:1fr; } .nav-links { display:none; } h1 { font-size:36px; } }
     @media (max-width:560px) { .shell { width:min(100% - 28px,1180px); } .hero-copy { padding:30px 24px 56px; } .folder-grid { grid-template-columns:1fr; } .grid { grid-template-columns:1fr; } }
   </style>
@@ -182,6 +189,13 @@
     </section>
   </div>
   <div class="context-menu" id="ctx"><button onclick="ctxOpen()" data-i18n="open">打开</button><button onclick="ctxCopy()" data-i18n="copy">复制 URL</button></div>
+  <div class="modal" id="previewModal" onclick="if(event.target===this)closePreview()">
+    <div class="modal-card preview-card">
+      <button class="ghost modal-close" onclick="closePreview()">×</button>
+      <div class="preview-head"><h2 class="preview-title" id="previewTitle">Preview</h2></div>
+      <div class="preview-body" id="previewBody"></div>
+    </div>
+  </div>
   <div class="modal" id="qrModal" onclick="if(event.target===this)closeQr()">
     <div class="modal-card">
       <button class="ghost modal-close" onclick="closeQr()">×</button>
@@ -221,6 +235,9 @@ function copyText(v){
 }
 function openQr(v){const modal=document.getElementById('qrModal');document.getElementById('qrUrl').textContent=v;document.getElementById('qrImg').src='/__staticdock/api/qr?text='+encodeURIComponent(v);modal.classList.add('open');}
 function closeQr(){document.getElementById('qrModal').classList.remove('open');}
+function canPreview(k){return ['image','video','audio','json','code','html','pdf','file'].includes(k);}
+async function previewFile(url,kind,name){if(!canPreview(kind)){location.href=url;return;}const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='<div class=\"note\">'+t('loading')+'</div>';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src=\"'+esc(url)+'\">';else if(kind==='video')body.innerHTML='<video src=\"'+esc(url)+'\" controls autoplay></video>';else if(kind==='audio')body.innerHTML='<audio src=\"'+esc(url)+'\" controls autoplay></audio>';else if(kind==='pdf')body.innerHTML='<iframe src=\"'+esc(url)+'\"></iframe>';else{try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>';}catch(e){body.innerHTML='<div class=\"error\">Preview failed. <a href=\"'+esc(url)+'\">Open file</a></div>';}}}
+function closePreview(){document.getElementById('previewModal').classList.remove('open');document.getElementById('previewBody').innerHTML='';}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsStr(s){return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');}
 function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
@@ -246,13 +263,13 @@ function renderEntries(){
  if(f!=='all')entries=entries.filter(e=>e.kind===f||(f==='file'&&!['dir','image','video','audio','archive','app','doc','pdf','code','json','html'].includes(e.kind)));
  document.getElementById('count').textContent=entries.length+(lang==='en'?t('items'):t('items'));
  if(!entries.length){grid.innerHTML='<div class="note">'+t('empty')+'</div>';return;}
- grid.innerHTML=entries.map(e=>{const url=e.url;let th;if(e.kind==='image')th=`<img src="${esc(url)}" loading="lazy">`;else if(e.kind==='video')th=`<video src="${esc(url)}#t=0.1" muted preload="metadata"></video>`;else th=`<span class="file-icon ${esc(e.kind)}">${icon(e.kind)}</span>`;const open=e.kind==='dir'?`loadList('${jsStr(url)}');return false;`:'';return `<div class="item" oncontextmenu="showCtx(event,'${jsStr(url)}',${e.kind==='dir'})"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div></div></div>`;}).join('');
+ grid.innerHTML=entries.map(e=>{const url=e.url;let th;if(e.kind==='image')th=`<img src="${esc(url)}" loading="lazy">`;else if(e.kind==='video')th=`<video src="${esc(url)}#t=0.1" muted preload="metadata"></video>`;else th=`<span class="file-icon ${esc(e.kind)}">${icon(e.kind)}</span>`;const open=e.kind==='dir'?`loadList('${jsStr(url)}');return false;`:`previewFile('${jsStr(url)}','${jsStr(e.kind)}','${jsStr(e.name)}');return false;`;return `<div class="item" oncontextmenu="showCtx(event,'${jsStr(url)}',${e.kind==='dir'})"><a class="thumb" href="${esc(url)}" onclick="${open}">${th}</a><div class="meta"><div class="name">${esc(e.name)}</div><div class="sub">${kindName(e.kind)} · ${fmt(e.bytes)}</div></div></div>`;}).join('');
 }
 let ctxUrl='',ctxIsDir=false;function showCtx(ev,url,isDir){ev.preventDefault();ctxUrl=url;ctxIsDir=isDir;const m=document.getElementById('ctx');m.style.left=Math.min(ev.clientX,innerWidth-170)+'px';m.style.top=Math.min(ev.clientY,innerHeight-100)+'px';m.classList.add('open');}
 function hideCtx(){document.getElementById('ctx').classList.remove('open');}
 function ctxOpen(){hideCtx();if(ctxIsDir)loadList(ctxUrl);else location.href=ctxUrl;}
 function ctxCopy(){hideCtx();copyText(location.origin+ctxUrl);}
-document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closeQr();}});
+document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closeQr();closePreview();}});
 applyLang();loadList('/');
 </script>
 </body>
