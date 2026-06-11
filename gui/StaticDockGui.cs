@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Windows.Forms;
 
 static class StaticDockGuiProgram
@@ -379,7 +380,7 @@ public class StaticDockForm : Form
 
     void OpenResourceFolder()
     {
-        try { string root = Path.GetFullPath(rootText.Text.Trim()); if (!Directory.Exists(root)) throw new Exception(T("missingRoot") + root); Process.Start("explorer.exe", root); }
+        try { string root = Path.GetFullPath(rootText.Text.Trim()); if (!Directory.Exists(root)) throw new Exception(T("missingRoot") + root); Process.Start("explorer.exe", Q(root)); }
         catch (Exception ex) { Log(T("startFailed") + ex.Message); }
     }
 
@@ -448,7 +449,43 @@ public class StaticDockForm : Form
         catch { }
     }
 
-    static string Q(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""; }
+    static string Q(string value)
+    {
+        if (value == null || value.Length == 0) return "\"\"";
+
+        bool needsQuotes = false;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '"') { needsQuotes = true; break; }
+        }
+        if (!needsQuotes) return value;
+
+        var sb = new StringBuilder();
+        sb.Append('"');
+        int backslashes = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"')
+            {
+                sb.Append('\\', backslashes * 2 + 1);
+                sb.Append('"');
+                backslashes = 0;
+                continue;
+            }
+            if (backslashes > 0)
+            {
+                sb.Append('\\', backslashes);
+                backslashes = 0;
+            }
+            sb.Append(c);
+        }
+        if (backslashes > 0) sb.Append('\\', backslashes * 2);
+        sb.Append('"');
+        return sb.ToString();
+    }
 
     void StartServer()
     {
