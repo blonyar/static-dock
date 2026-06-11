@@ -754,6 +754,30 @@ fn send_text_with_headers(
     Ok(())
 }
 
+fn send_binary(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+    bytes: &[u8],
+    content_type: &str,
+    head_only: bool,
+) -> io::Result<()> {
+    let content_len = bytes.len().to_string();
+    send_headers(
+        stream,
+        status,
+        reason,
+        &[
+            ("Content-Type", content_type),
+            ("Content-Length", content_len.as_str()),
+        ],
+    )?;
+    if !head_only {
+        stream.write_all(bytes)?;
+    }
+    Ok(())
+}
+
 fn send_headers(
     stream: &mut TcpStream,
     status: u16,
@@ -782,31 +806,49 @@ fn send_headers(
 
 fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Result<()> {
     let text = query_param(target, "text").unwrap_or_else(|| "/".to_string());
-    match qr_svg(&text) {
-        Some(svg) => send_text(
-            stream,
-            200,
-            "OK",
-            &svg,
-            "image/svg+xml; charset=utf-8",
-            head_only,
-        ),
-        None => send_text(
-            stream,
-            400,
-            "Bad Request",
-            "QR text is too long.",
-            "text/plain; charset=utf-8",
-            head_only,
-        ),
+    let format = query_param(target, "format").unwrap_or_else(|| "svg".to_string());
+    match format.as_str() {
+        "bmp" => match qr_bmp(&text) {
+            Some(bytes) => send_binary(stream, 200, "OK", &bytes, "image/bmp", head_only),
+            None => send_text(
+                stream,
+                400,
+                "Bad Request",
+                "QR text is too long.",
+                "text/plain; charset=utf-8",
+                head_only,
+            ),
+        },
+        _ => match qr_svg(&text) {
+            Some(svg) => send_text(
+                stream,
+                200,
+                "OK",
+                &svg,
+                "image/svg+xml; charset=utf-8",
+                head_only,
+            ),
+            None => send_text(
+                stream,
+                400,
+                "Bad Request",
+                "QR text is too long.",
+                "text/plain; charset=utf-8",
+                head_only,
+            ),
+        },
     }
 }
 
-fn qr_svg(text: &str) -> Option<String> {
+fn qr_code(text: &str) -> Option<QrCode> {
     if text.len() > 512 {
         return None;
     }
-    let qr = QrCode::encode_text(text, QrCodeEcc::Low).ok()?;
+    QrCode::encode_text(text, QrCodeEcc::Low).ok()
+}
+
+fn qr_svg(text: &str) -> Option<String> {
+    let qr = qr_code(text)?;
     let qr_size = qr.size();
     let border = 4;
     let size = qr_size + border * 2;
@@ -822,6 +864,55 @@ fn qr_svg(text: &str) -> Option<String> {
     }
     svg.push_str("\"/></svg>");
     Some(svg)
+}
+
+fn qr_bmp(text: &str) -> Option<Vec<u8>> {
+    let qr = qr_code(text)?;
+    let qr_size = qr.size();
+    let border = 4i32;
+    let scale = 8i32;
+    let pixels = (qr_size + border * 2) * scale;
+    let row_stride = ((pixels * 3 + 3) / 4 * 4) as usize;
+    let image_size = row_stride * pixels as usize;
+    let file_size = 54usize + image_size;
+    let mut bmp = Vec::with_capacity(file_size);
+
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(file_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&[0, 0, 0, 0]);
+    bmp.extend_from_slice(&(54u32).to_le_bytes());
+    bmp.extend_from_slice(&(40u32).to_le_bytes());
+    bmp.extend_from_slice(&pixels.to_le_bytes());
+    bmp.extend_from_slice(&pixels.to_le_bytes());
+    bmp.extend_from_slice(&(1u16).to_le_bytes());
+    bmp.extend_from_slice(&(24u16).to_le_bytes());
+    bmp.extend_from_slice(&(0u32).to_le_bytes());
+    bmp.extend_from_slice(&(image_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&(2835i32).to_le_bytes());
+    bmp.extend_from_slice(&(2835i32).to_le_bytes());
+    bmp.extend_from_slice(&(0u32).to_le_bytes());
+    bmp.extend_from_slice(&(0u32).to_le_bytes());
+
+    for y in (0..pixels).rev() {
+        let module_y = y / scale - border;
+        for x in 0..pixels {
+            let module_x = x / scale - border;
+            let dark = module_x >= 0
+                && module_y >= 0
+                && module_x < qr_size
+                && module_y < qr_size
+                && qr.get_module(module_x, module_y);
+            if dark {
+                bmp.extend_from_slice(&[0x27, 0x1f, 0x11]);
+            } else {
+                bmp.extend_from_slice(&[0xff, 0xff, 0xff]);
+            }
+        }
+        while (bmp.len() - 54) % row_stride != 0 {
+            bmp.push(0);
+        }
+    }
+    Some(bmp)
 }
 
 fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool) -> io::Result<()> {
@@ -1117,7 +1208,7 @@ fn directory_listing(path: &Path, target: &str) -> io::Result<String> {
         }
         body.push_str("</section>");
     }
-    body.push_str(r#"<div class="ctx" id="ctx"><button onclick="previewCtx()">预览/播放</button><button onclick="openCtx()">打开</button><button onclick="openNewCtx()">新标签打开</button><button onclick="downloadCtx()">下载</button><button onclick="copyCtx()">复制 URL</button></div><div class="modal" id="previewModal" onclick="if(event.target===this)closePreview()"><div class="modal-card"><button class="ghost modal-close" onclick="closePreview()">×</button><h2 id="previewTitle">Preview</h2><div class="preview-body" id="previewBody"></div></div></div><script>let ctx='',ctxKind='file',ctxName='',ctxIsDir=false;function showCtx(e,u,k,n,d){e.preventDefault();ctx=u;ctxKind=k;ctxName=n||u;ctxIsDir=d;const m=document.getElementById('ctx');m.style.left=Math.min(e.clientX,innerWidth-170)+'px';m.style.top=Math.min(e.clientY,innerHeight-100)+'px';m.classList.add('open')}function hideCtx(){document.getElementById('ctx').classList.remove('open')}function previewCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openNewCtx(){hideCtx();window.open(ctx,'_blank','noopener')}function downloadCtx(){hideCtx();const a=document.createElement('a');a.href=ctx;a.download=ctxName||'';document.body.appendChild(a);a.click();a.remove()}function copyCtx(){hideCtx();navigator.clipboard&&navigator.clipboard.writeText(location.origin+ctx)}function esc(s){return(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}async function previewFile(url,kind,name){const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='加载中...';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src="'+esc(url)+'">';else if(kind==='video')body.innerHTML='<video src="'+esc(url)+'" controls autoplay></video>';else if(kind==='audio')body.innerHTML='<audio src="'+esc(url)+'" controls autoplay></audio>';else if(kind==='pdf')body.innerHTML='<iframe src="'+esc(url)+'"></iframe>';else if(['json','code','html','file'].includes(kind)){try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>'}catch(e){location.href=url}}else body.innerHTML='<div style="padding:24px;text-align:center"><p>此类型不支持直接预览。</p><p><a class="btn" href="'+esc(url)+'" target="_blank">新标签打开</a> <a class="btn ghost" href="'+esc(url)+'" download>下载</a></p></div>'}function closePreview(){document.getElementById('previewModal').classList.remove('open');document.getElementById('previewBody').innerHTML=''}document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closePreview()}});</script></main></body></html>"#);
+    body.push_str(r#"<div class="ctx" id="ctx"><button onclick="previewCtx()">预览/播放</button><button onclick="openCtx()">打开</button><button onclick="openNewCtx()">新标签打开</button><button onclick="downloadCtx()">下载</button><button onclick="copyCtx()">复制 URL</button></div><div class="modal" id="previewModal" onclick="if(event.target===this)closePreview()"><div class="modal-card"><button class="ghost modal-close" onclick="closePreview()">×</button><h2 id="previewTitle">Preview</h2><div class="preview-body" id="previewBody"></div></div></div><script>let ctx='',ctxKind='file',ctxName='',ctxIsDir=false;function showCtx(e,u,k,n,d){e.preventDefault();ctx=u;ctxKind=k;ctxName=n||u;ctxIsDir=d;const m=document.getElementById('ctx');m.style.left=Math.min(e.clientX,innerWidth-170)+'px';m.style.top=Math.min(e.clientY,innerHeight-100)+'px';m.classList.add('open')}function hideCtx(){document.getElementById('ctx').classList.remove('open')}function previewCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openCtx(){hideCtx();if(ctxIsDir)location.href=ctx;else previewFile(ctx,ctxKind,ctxName)}function openNewCtx(){hideCtx();window.open(ctx,'_blank','noopener')}function downloadCtx(){hideCtx();const a=document.createElement('a');a.href=ctx;a.download=ctxName||'';document.body.appendChild(a);a.click();a.remove()}function copyCtx(){hideCtx();navigator.clipboard&&navigator.clipboard.writeText(location.origin+ctx)}function esc(s){return(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}async function previewFile(url,kind,name){const modal=document.getElementById('previewModal'),body=document.getElementById('previewBody');document.getElementById('previewTitle').textContent=name||url;body.innerHTML='加载中...';modal.classList.add('open');if(kind==='image')body.innerHTML='<img src="'+esc(url)+'">';else if(kind==='video')body.innerHTML='<video src="'+esc(url)+'" controls preload="metadata" playsinline></video><div class="preview-help" style="padding:12px 18px;color:#64748b;text-align:center">浏览器若不支持该视频编码，可用右键菜单新标签打开或下载。</div>';else if(kind==='audio')body.innerHTML='<audio src="'+esc(url)+'" controls preload="metadata"></audio>';else if(kind==='pdf')body.innerHTML='<iframe src="'+esc(url)+'"></iframe><div class="preview-help" style="padding:12px 18px;color:#64748b;text-align:center">PDF 未显示时，可用右键菜单新标签打开或下载。</div>';else if(['json','code','html','file'].includes(kind)){try{const r=await fetch(url);const txt=await r.text();body.innerHTML='<pre>'+esc(txt.slice(0,200000))+(txt.length>200000?'\n...':'')+'</pre>'}catch(e){location.href=url}}else body.innerHTML='<div style="padding:24px;text-align:center"><p>此类型不支持直接预览。</p><p><a class="btn" href="'+esc(url)+'" target="_blank">新标签打开</a> <a class="btn ghost" href="'+esc(url)+'" download>下载</a></p></div>'}function closePreview(){document.getElementById('previewModal').classList.remove('open');document.getElementById('previewBody').innerHTML=''}document.addEventListener('click',hideCtx);document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideCtx();closePreview()}});</script></main></body></html>"#);
     Ok(body)
 }
 

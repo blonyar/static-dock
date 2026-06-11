@@ -98,6 +98,7 @@ public class StaticDockForm : Form
             case "qr": return en ? "QR" : "二维码";
             case "qrTitle": return en ? "Phone QR Code" : "手机访问二维码";
             case "qrHint": return en ? "Scan this QR code with your phone on the same Wi-Fi." : "手机和电脑连接同一 Wi-Fi 后扫码访问。";
+            case "qrLoadFailed": return en ? "QR code failed to load. Make sure the server is running." : "二维码加载失败，请确认服务正在运行。";
             case "copyAll": return en ? "Copy All" : "复制全部";
             case "advancedShow": return en ? "Show advanced settings" : "显示高级设置";
             case "advancedHide": return en ? "Hide advanced settings" : "隐藏高级设置";
@@ -362,7 +363,15 @@ public class StaticDockForm : Form
             copy.Click += delegate { CopyUrl(url); };
 
             dialog.Controls.Add(title); dialog.Controls.Add(hint); dialog.Controls.Add(picture); dialog.Controls.Add(urlBox); dialog.Controls.Add(copy);
-            picture.LoadAsync(new Uri(new Uri(url), "/__staticdock/api/qr?text=" + Uri.EscapeDataString(url)).ToString());
+            picture.LoadCompleted += delegate(object sender, System.ComponentModel.AsyncCompletedEventArgs e)
+            {
+                if (e.Error != null)
+                {
+                    picture.Image = null;
+                    picture.Controls.Add(new Label { Dock = DockStyle.Fill, Text = T("qrLoadFailed"), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(185, 28, 28) });
+                }
+            };
+            picture.LoadAsync(new Uri(new Uri(url), "/__staticdock/api/qr?format=bmp&text=" + Uri.EscapeDataString(url)).ToString());
             dialog.ShowDialog(this);
         }
     }
