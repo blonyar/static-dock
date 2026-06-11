@@ -2,6 +2,32 @@
 
 All notable changes to StaticDock are documented here.
 
+## v0.2.7
+
+### Highlights
+
+- Fixed native Windows GUI server startup for shared folders whose paths contain spaces, Unicode characters, or common directories such as Downloads.
+- Rebuilt and validated the Windows standard and loadtest packages after the path quoting fix.
+
+### Packages
+
+- `static-dock-windows-x64.zip`: recommended for most users; smaller package without loadtest assets.
+- `static-dock-windows-x64-with-loadtest.zip`: includes loadtest assets and scripts for local stress testing.
+
+### Quick start
+
+Extract the package, then double-click:
+
+```text
+start-static-dock-gui.bat
+```
+
+Default URL:
+
+```text
+http://127.0.0.1:8787/
+```
+
 ## v0.2.6
 
 ### Highlights
