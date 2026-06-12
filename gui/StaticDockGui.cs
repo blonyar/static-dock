@@ -10,9 +10,13 @@ using System.Windows.Forms;
 
 static class StaticDockGuiProgram
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool SetProcessDpiAwarenessContext(int value);
+
     [STAThread]
     static void Main()
     {
+        try { SetProcessDpiAwarenessContext(-4); } catch { } // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new StaticDockForm());
@@ -366,8 +370,8 @@ public class StaticDockForm : Form
 
     void TryLoadWindowIcon()
     {
-        try { Icon embedded = Icon.ExtractAssociatedIcon(Application.ExecutablePath); if (embedded != null) { Icon = embedded; return; } } catch { }
-        try { if (File.Exists(iconFile)) using (var bitmap = new Bitmap(iconFile)) Icon = Icon.FromHandle(bitmap.GetHicon()); } catch { }
+        try { Icon embedded = Icon.ExtractAssociatedIcon(Application.ExecutablePath); if (embedded != null) { Icon = embedded; return; } } catch (Exception ex) { Log("[warn] Icon: " + ex.Message); }
+        try { if (File.Exists(iconFile)) using (var bitmap = new Bitmap(iconFile)) Icon = Icon.FromHandle(bitmap.GetHicon()); } catch (Exception ex) { Log("[warn] Icon file: " + ex.Message); }
     }
 
     void MonitorServer()
@@ -466,7 +470,7 @@ public class StaticDockForm : Form
                 else if (k == "recentRoots") LoadRecentRoots(v);
             }
         }
-        catch { }
+        catch (Exception ex) { Log("[warn] " + ex.Message); }
         langBox.SelectedIndex = lang == "en" ? 1 : 0;
         loading = false; SaveSettings(); Log(T("bootLog")); Log(T("settingsPath") + settingsFile); if (autoStartBox.Checked) StartServer();
     }
@@ -479,7 +483,7 @@ public class StaticDockForm : Form
             if (!Directory.Exists(settingsDir)) Directory.CreateDirectory(settingsDir);
             File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lang=" + lang, "autoStart=" + (autoStartBox.Checked ? "1" : "0"), "openAfterStart=" + (openAfterStartBox.Checked ? "1" : "0"), "recentRoots=" + RecentRootsLine() });
         }
-        catch { }
+        catch (Exception ex) { Log("[warn] SaveSettings: " + ex.Message); }
     }
 
     static string Q(string value)
@@ -539,7 +543,7 @@ public class StaticDockForm : Form
             server.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) { if (e.Data.StartsWith("Port:")) { int p; if (Int32.TryParse(e.Data.Substring(5).Trim(), out p)) actualPort = p; } BeginInvoke(new Action(delegate { RefreshUrls(); })); } };
             server.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) BeginInvoke(new Action(delegate { if (!IsBenignNetworkError(e.Data)) Log("[error] " + e.Data); })); };
             server.Start(); server.BeginOutputReadLine(); server.BeginErrorReadLine(); TryWriteText(pidFile, server.Id.ToString());
-            System.Threading.Thread.Sleep(800); if (server.HasExited) throw new Exception(T("startFailedFast") + server.ExitCode);
+            if (server.WaitForExit(800)) throw new Exception(T("startFailedFast") + server.ExitCode);
             RefreshUrls(); lastUrls = BuildUrls(actualPort, root); TryWriteText(Path.Combine(settingsDir, "static-dock-urls.txt"), lastUrls);
             try { Clipboard.SetText(lastUrls); } catch { }
             SetRunning(true); RefreshUrls(); SaveSettings();
@@ -559,7 +563,7 @@ public class StaticDockForm : Form
             if (!String.IsNullOrEmpty(parent) && !Directory.Exists(parent)) Directory.CreateDirectory(parent);
             File.WriteAllText(path, text, System.Text.Encoding.UTF8);
         }
-        catch { }
+        catch (Exception ex) { Log("[warn] Write " + Path.GetFileName(path) + ": " + ex.Message); }
     }
 
     string BuildUrls(int port, string root)

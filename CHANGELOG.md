@@ -2,6 +2,31 @@
 
 All notable changes to StaticDock are documented here.
 
+## v0.3.0
+
+### Performance
+- **HTTP Keep-Alive**: Connections are reused for multiple requests, dramatically reducing latency for directory browsing and batch file loading.
+- **Buffer reuse**: Each worker thread now reuses a single 256 KB buffer via `thread_local!`, eliminating per-request heap allocations.
+- **ETag + 304 Not Modified**: Files now return `ETag` headers; repeat requests for unchanged files get a `304` response with no body, saving bandwidth.
+- **Cached canonicalize**: `ensure_inside_root` no longer re-canonicalizes the root path on every request.
+- **LAN detection via `ipconfig`**: Replaced the PowerShell-based LAN IP detection with direct `ipconfig` parsing, reducing startup time by 1–3 seconds.
+
+### Features
+- **File upload with resumable chunks**: Upload files via the WebUI with drag-and-drop or the upload button. Large files are split into 1 MB chunks and can be resumed after interruption. Upload progress and speed are displayed in real time.
+- **PWA (Progressive Web App)**: `manifest.json` and a Service Worker enable "Add to Home Screen" on iOS and Android. The app shell is cached for instant re-launch and works offline for the UI shell.
+- **Mobile-optimized UI**: Fixed bottom navigation bar (≥ 44 px touch targets), safe-area-inset support for notched screens, and larger file thumbnails on phones.
+- **Graceful shutdown**: Pressing Ctrl+C now waits for in-flight requests to complete (up to 30 seconds) before exiting, preventing truncated downloads.
+
+### GUI
+- Replaced `Thread.Sleep(800)` with `WaitForExit(800)` for non-blocking server startup detection.
+- Empty `catch {}` blocks replaced with logged warnings for better diagnostics.
+- Added `SetProcessDpiAwarenessContext` for Per-Monitor V2 DPI support on Windows 10+.
+
+### Packages
+
+- `static-dock-windows-x64.zip`: recommended for most users.
+- `static-dock-windows-x64-with-loadtest.zip`: includes loadtest assets and scripts.
+
 ## v0.2.8
 
 ### Highlights

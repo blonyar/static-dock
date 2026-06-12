@@ -5,6 +5,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,8 +16,17 @@ const COPY_BUFFER_SIZE: usize = 256 * 1024;
 const WORKER_STACK_SIZE: usize = 512 * 1024;
 const MAX_WORKERS: usize = 256;
 const MAX_QUEUE_SIZE: usize = 4096;
-const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(2);
-const HEADER_TOTAL_TIMEOUT: Duration = Duration::from_secs(5);
+const HEADER_TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
+const KEEP_ALIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const CHUNK_SIZE: u64 = 1024 * 1024; // 1 MB upload chunk
+const UPLOAD_EXPIRY_SECS: u64 = 86400; // 24 hours
+
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static COPY_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; COPY_BUFFER_SIZE]);
+}
 
 #[derive(Clone)]
 struct Config {
@@ -30,6 +40,8 @@ struct Request {
     method: String,
     target: String,
     headers: HashMap<String, String>,
+    /// Body bytes already consumed while reading headers (for POST/PUT bodies)
+    body_prefix: Vec<u8>,
 }
 
 fn main() {
@@ -40,6 +52,7 @@ fn main() {
 }
 
 fn run() -> io::Result<()> {
+    register_shutdown_handler();
     let config = parse_args()?;
     let (listener, selected_port) = bind_listener(config.port)?;
     let root = fs::canonicalize(&config.root)?;
@@ -71,6 +84,8 @@ fn run() -> io::Result<()> {
     println!("Keep this window open while using the server. Press Ctrl+C to stop.");
     println!();
 
+    cleanup_expired_uploads(&root);
+
     let (sender, receiver) = mpsc::sync_channel::<TcpStream>(config.queue_size);
     let receiver = Arc::new(Mutex::new(receiver));
 
@@ -84,9 +99,15 @@ fn run() -> io::Result<()> {
             .map_err(io::Error::other)?;
     }
 
-    for incoming in listener.incoming() {
-        match incoming {
-            Ok(stream) => {
+    listener.set_nonblocking(true).ok();
+    loop {
+        if SHUTDOWN.load(Ordering::SeqCst) {
+            println!("\nShutting down gracefully...");
+            break;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).ok(); // accepted stream inherits non-blocking on Windows
                 stream.set_nodelay(true).ok();
                 match sender.try_send(stream) {
                     Ok(()) => {}
@@ -96,10 +117,21 @@ fn run() -> io::Result<()> {
                     Err(mpsc::TrySendError::Disconnected(_stream)) => break,
                 }
             }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(100));
+            }
             Err(err) => eprintln!("Connection failed: {err}"),
         }
     }
 
+    drop(sender);
+    let wait_start = Instant::now();
+    while ACTIVE_REQUESTS.load(Ordering::SeqCst) > 0
+        && wait_start.elapsed() < Duration::from_secs(30)
+    {
+        thread::sleep(Duration::from_millis(100));
+    }
+    println!("All requests completed. Goodbye.");
     Ok(())
 }
 
@@ -117,14 +149,231 @@ fn worker_loop(worker_id: usize, receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>
         };
 
         match stream {
-            Ok(stream) => {
-                if let Err(err) = handle_client(stream, &root) {
-                    eprintln!("Worker {worker_id} request failed: {err}");
-                }
+            Ok(mut stream) => {
+                ACTIVE_REQUESTS.fetch_add(1, Ordering::SeqCst);
+                COPY_BUF.with(|buf_cell| {
+                    let mut buf = buf_cell.borrow_mut();
+                    if let Err(err) = handle_connection(&mut stream, &root, &mut buf) {
+                        if !is_benign_error(&err) {
+                            eprintln!("Worker {worker_id} request failed: {err}");
+                        }
+                    }
+                });
+                ACTIVE_REQUESTS.fetch_sub(1, Ordering::SeqCst);
             }
             Err(_) => return,
         }
     }
+}
+
+fn is_benign_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::WouldBlock
+    )
+}
+
+fn handle_connection(
+    stream: &mut TcpStream,
+    root: &Path,
+    buf: &mut [u8],
+) -> io::Result<()> {
+    let canonical_root = root.to_path_buf();
+
+    loop {
+        if SHUTDOWN.load(Ordering::SeqCst) {
+            break;
+        }
+
+        stream
+            .set_read_timeout(Some(KEEP_ALIVE_IDLE_TIMEOUT))
+            .ok();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(120)))
+            .ok();
+
+        let request = match read_request(stream, HEADER_TOTAL_TIMEOUT)? {
+            Some(request) => request,
+            None => return Ok(()),
+        };
+
+        let wants_keepalive = request
+            .headers
+            .get("connection")
+            .map(|v| !v.to_ascii_lowercase().contains("close"))
+            .unwrap_or(true);
+
+        let head_only = request.method == "HEAD";
+        let normalized_target = normalize_request_target(&request.target);
+
+        let keep_alive = wants_keepalive;
+
+        if request.method == "OPTIONS" {
+            send_headers(
+                stream,
+                204,
+                "No Content",
+                &[("Content-Length", "0")],
+                keep_alive,
+            )?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        // Upload API (POST allowed)
+        if normalized_target.starts_with("/__staticdock/api/upload/") {
+            handle_upload_api(stream, root, &normalized_target, &request, buf, keep_alive)?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if request.method != "GET" && request.method != "HEAD" {
+            send_text_with_headers(
+                stream,
+                405,
+                "Method Not Allowed",
+                "Method not allowed.",
+                "text/plain; charset=utf-8",
+                head_only,
+                &[("Allow", "GET, HEAD, OPTIONS, POST")],
+                keep_alive,
+            )?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if normalized_target.starts_with("/__staticdock/api/list") {
+            send_api_list(stream, root, &normalized_target, head_only, keep_alive)?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if normalized_target.starts_with("/__staticdock/api/info") {
+            send_api_info(stream, root, head_only, keep_alive)?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if normalized_target.starts_with("/__staticdock/api/qr") {
+            send_api_qr(stream, &normalized_target, head_only, keep_alive)?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        let path = match resolve_request_path(root, &normalized_target) {
+            Some(path) => path,
+            None => {
+                send_text(
+                    stream,
+                    403,
+                    "Forbidden",
+                    "Forbidden.",
+                    "text/plain; charset=utf-8",
+                    head_only,
+                    keep_alive,
+                )?;
+                if !keep_alive {
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+
+        if !path.exists() {
+            send_text(
+                stream,
+                404,
+                "Not Found",
+                "Not found.",
+                "text/plain; charset=utf-8",
+                head_only,
+                keep_alive,
+            )?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        let path = match ensure_inside_root(&canonical_root, path) {
+            Some(path) => path,
+            None => {
+                send_text(
+                    stream,
+                    403,
+                    "Forbidden",
+                    "Forbidden.",
+                    "text/plain; charset=utf-8",
+                    head_only,
+                    keep_alive,
+                )?;
+                if !keep_alive {
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+
+        if path.is_dir() {
+            let index = path.join("index.html");
+            if index.is_file() {
+                send_file(stream, &index, &request.headers, head_only, keep_alive, buf)?;
+            } else {
+                let html = directory_listing(&path, &normalized_target)?;
+                send_text(
+                    stream,
+                    200,
+                    "OK",
+                    &html,
+                    "text/html; charset=utf-8",
+                    head_only,
+                    keep_alive,
+                )?;
+            }
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if !path.is_file() {
+            send_text(
+                stream,
+                404,
+                "Not Found",
+                "Not found.",
+                "text/plain; charset=utf-8",
+                head_only,
+                keep_alive,
+            )?;
+            if !keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        send_file(stream, &path, &request.headers, head_only, keep_alive, buf)?;
+        if !keep_alive {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 fn parse_args() -> io::Result<Config> {
@@ -287,127 +536,7 @@ fn bind_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
     Ok((listener, port))
 }
 
-fn handle_client(mut stream: TcpStream, root: &Path) -> io::Result<()> {
-    stream.set_read_timeout(Some(HEADER_READ_TIMEOUT)).ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(120)))
-        .ok();
-
-    let request = match read_request(&mut stream, HEADER_TOTAL_TIMEOUT)? {
-        Some(request) => request,
-        None => return Ok(()),
-    };
-
-    let head_only = request.method == "HEAD";
-    let normalized_target = normalize_request_target(&request.target);
-
-    if request.method == "OPTIONS" {
-        send_headers(&mut stream, 204, "No Content", &[("Content-Length", "0")])?;
-        return Ok(());
-    }
-
-    if request.method != "GET" && request.method != "HEAD" {
-        send_text_with_headers(
-            &mut stream,
-            405,
-            "Method Not Allowed",
-            "Method not allowed.",
-            "text/plain; charset=utf-8",
-            head_only,
-            &[("Allow", "GET, HEAD, OPTIONS")],
-        )?;
-        return Ok(());
-    }
-
-    if normalized_target.starts_with("/__staticdock/api/list") {
-        send_api_list(&mut stream, root, &normalized_target, head_only)?;
-        return Ok(());
-    }
-
-    if normalized_target.starts_with("/__staticdock/api/info") {
-        send_api_info(&mut stream, root, head_only)?;
-        return Ok(());
-    }
-
-    if normalized_target.starts_with("/__staticdock/api/qr") {
-        send_api_qr(&mut stream, &normalized_target, head_only)?;
-        return Ok(());
-    }
-
-    let path = match resolve_request_path(root, &normalized_target) {
-        Some(path) => path,
-        None => {
-            send_text(
-                &mut stream,
-                403,
-                "Forbidden",
-                "Forbidden.",
-                "text/plain; charset=utf-8",
-                head_only,
-            )?;
-            return Ok(());
-        }
-    };
-
-    if !path.exists() {
-        send_text(
-            &mut stream,
-            404,
-            "Not Found",
-            "Not found.",
-            "text/plain; charset=utf-8",
-            head_only,
-        )?;
-        return Ok(());
-    }
-
-    let path = match ensure_inside_root(root, path) {
-        Some(path) => path,
-        None => {
-            send_text(
-                &mut stream,
-                403,
-                "Forbidden",
-                "Forbidden.",
-                "text/plain; charset=utf-8",
-                head_only,
-            )?;
-            return Ok(());
-        }
-    };
-
-    if path.is_dir() {
-        let index = path.join("index.html");
-        if index.is_file() {
-            send_file(&mut stream, &index, &request.headers, head_only)?;
-        } else {
-            let html = directory_listing(&path, &normalized_target)?;
-            send_text(
-                &mut stream,
-                200,
-                "OK",
-                &html,
-                "text/html; charset=utf-8",
-                head_only,
-            )?;
-        }
-        return Ok(());
-    }
-
-    if !path.is_file() {
-        send_text(
-            &mut stream,
-            404,
-            "Not Found",
-            "Not found.",
-            "text/plain; charset=utf-8",
-            head_only,
-        )?;
-        return Ok(());
-    }
-
-    send_file(&mut stream, &path, &request.headers, head_only)
-}
+// end of handle_connection block
 
 fn read_request(stream: &mut TcpStream, total_timeout: Duration) -> io::Result<Option<Request>> {
     let deadline = Instant::now() + total_timeout;
@@ -454,6 +583,11 @@ fn read_request(stream: &mut TcpStream, total_timeout: Duration) -> io::Result<O
     let end = header_end(&buffer)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad request header"))?;
     let text = String::from_utf8_lossy(&buffer[..end]);
+    let body_prefix = if end + 4 < buffer.len() {
+        buffer[end + 4..].to_vec()
+    } else {
+        Vec::new()
+    };
     let mut lines = text.split("\r\n");
     let request_line = lines
         .next()
@@ -479,6 +613,7 @@ fn read_request(stream: &mut TcpStream, total_timeout: Duration) -> io::Result<O
         method,
         target,
         headers,
+        body_prefix,
     }))
 }
 
@@ -532,10 +667,9 @@ fn request_path_part(target: &str) -> Option<&str> {
     Some(before_query)
 }
 
-fn ensure_inside_root(root: &Path, path: PathBuf) -> Option<PathBuf> {
-    let root = fs::canonicalize(root).ok()?;
+fn ensure_inside_root(canonical_root: &Path, path: PathBuf) -> Option<PathBuf> {
     let canonical = fs::canonicalize(&path).ok()?;
-    if canonical.starts_with(&root) {
+    if canonical.starts_with(canonical_root) {
         Some(canonical)
     } else {
         None
@@ -547,6 +681,8 @@ fn send_file(
     path: &Path,
     headers: &HashMap<String, String>,
     head_only: bool,
+    keep_alive: bool,
+    buf: &mut [u8],
 ) -> io::Result<()> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
@@ -558,6 +694,7 @@ fn send_file(
             "Not found.",
             "text/plain; charset=utf-8",
             head_only,
+            keep_alive,
         )?;
         return Ok(());
     }
@@ -565,6 +702,27 @@ fn send_file(
     let file_len = metadata.len();
     let content_type = content_type(path);
     let last_modified = format_http_date(metadata.modified().ok());
+    let etag = metadata
+        .modified()
+        .ok()
+        .map(|mtime| generate_etag(file_len, mtime))
+        .unwrap_or_default();
+
+    // ETag conditional: If-None-Match
+    if !etag.is_empty() {
+        if let Some(if_none_match) = headers.get("if-none-match") {
+            if etag_matches(if_none_match, &etag) {
+                send_headers(
+                    stream,
+                    304,
+                    "Not Modified",
+                    &[("ETag", &etag), ("Cache-Control", "public, max-age=3600")],
+                    keep_alive,
+                )?;
+                return Ok(());
+            }
+        }
+    }
 
     let range_header = headers.get("range");
     if range_header.is_some() && file_len == 0 {
@@ -573,15 +731,17 @@ fn send_file(
             416,
             "Range Not Satisfiable",
             &[("Content-Range", "bytes */0"), ("Content-Length", "0")],
+            keep_alive,
         )?;
         return Ok(());
     }
 
     let range_allowed_by_if_range = match headers.get("if-range") {
-        Some(if_range) => last_modified
-            .as_deref()
-            .map(|value| if_range.trim() == value)
-            .unwrap_or(false),
+        Some(if_range) => {
+            let v = if_range.trim();
+            last_modified.as_deref().map(|lm| v == lm).unwrap_or(false)
+                || (!etag.is_empty() && v == etag)
+        }
         None => true,
     };
 
@@ -598,6 +758,7 @@ fn send_file(
                         ("Content-Range", content_range.as_str()),
                         ("Content-Length", "0"),
                     ],
+                    keep_alive,
                 )?;
                 return Ok(());
             }
@@ -624,10 +785,13 @@ fn send_file(
     let mut response_headers = vec![
         ("Content-Type", content_type.as_str()),
         ("Content-Length", content_len_string.as_str()),
-        ("Cache-Control", "no-cache, no-store, must-revalidate"),
+        ("Cache-Control", "public, max-age=3600"),
     ];
     if let Some(last_modified) = last_modified.as_deref() {
         response_headers.push(("Last-Modified", last_modified));
+    }
+    if !etag.is_empty() {
+        response_headers.push(("ETag", &etag));
     }
 
     let content_range;
@@ -636,14 +800,14 @@ fn send_file(
         response_headers.push(("Content-Range", content_range.as_str()));
     }
 
-    send_headers(stream, status, reason, &response_headers)?;
+    send_headers(stream, status, reason, &response_headers, keep_alive)?;
 
     if head_only || content_len == 0 {
         return Ok(());
     }
 
     file.seek(SeekFrom::Start(start))?;
-    copy_limited(&mut file, stream, content_len)
+    copy_limited(&mut file, stream, content_len, buf)
 }
 
 fn parse_range(value: &str, file_len: u64) -> Option<io::Result<(u64, u64)>> {
@@ -692,15 +856,14 @@ fn range_not_satisfiable(file_len: u64) -> io::Error {
     )
 }
 
-fn copy_limited(input: &mut File, output: &mut TcpStream, mut remaining: u64) -> io::Result<()> {
-    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+fn copy_limited(input: &mut File, output: &mut TcpStream, mut remaining: u64, buf: &mut [u8]) -> io::Result<()> {
     while remaining > 0 {
-        let to_read = remaining.min(buffer.len() as u64) as usize;
-        let read = input.read(&mut buffer[..to_read])?;
+        let to_read = remaining.min(buf.len() as u64) as usize;
+        let read = input.read(&mut buf[..to_read])?;
         if read == 0 {
             break;
         }
-        output.write_all(&buffer[..read])?;
+        output.write_all(&buf[..read])?;
         remaining -= read as u64;
     }
     Ok(())
@@ -713,6 +876,7 @@ fn send_text(
     body: &str,
     content_type: &str,
     head_only: bool,
+    keep_alive: bool,
 ) -> io::Result<()> {
     let bytes = body.as_bytes();
     let content_len = bytes.len().to_string();
@@ -724,6 +888,7 @@ fn send_text(
             ("Content-Type", content_type),
             ("Content-Length", content_len.as_str()),
         ],
+        keep_alive,
     )?;
     if !head_only {
         stream.write_all(bytes)?;
@@ -739,6 +904,7 @@ fn send_text_with_headers(
     content_type: &str,
     head_only: bool,
     extra_headers: &[(&str, &str)],
+    keep_alive: bool,
 ) -> io::Result<()> {
     let bytes = body.as_bytes();
     let content_len = bytes.len().to_string();
@@ -747,7 +913,7 @@ fn send_text_with_headers(
         ("Content-Length", content_len.as_str()),
     ];
     headers.extend_from_slice(extra_headers);
-    send_headers(stream, status, reason, &headers)?;
+    send_headers(stream, status, reason, &headers, keep_alive)?;
     if !head_only {
         stream.write_all(bytes)?;
     }
@@ -761,6 +927,7 @@ fn send_binary(
     bytes: &[u8],
     content_type: &str,
     head_only: bool,
+    keep_alive: bool,
 ) -> io::Result<()> {
     let content_len = bytes.len().to_string();
     send_headers(
@@ -771,6 +938,7 @@ fn send_binary(
             ("Content-Type", content_type),
             ("Content-Length", content_len.as_str()),
         ],
+        keep_alive,
     )?;
     if !head_only {
         stream.write_all(bytes)?;
@@ -783,18 +951,23 @@ fn send_headers(
     status: u16,
     reason: &str,
     headers: &[(&str, &str)],
+    keep_alive: bool,
 ) -> io::Result<()> {
     write!(stream, "HTTP/1.1 {status} {reason}\r\n")?;
     write!(stream, "Server: StaticDock/1.0\r\n")?;
-    write!(stream, "Connection: close\r\n")?;
+    write!(
+        stream,
+        "Connection: {}\r\n",
+        if keep_alive { "keep-alive" } else { "close" }
+    )?;
     write!(stream, "Access-Control-Allow-Origin: *\r\n")?;
     write!(
         stream,
-        "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n"
+        "Access-Control-Allow-Methods: GET, HEAD, OPTIONS, POST\r\n"
     )?;
     write!(
         stream,
-        "Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Range, If-Range\r\n"
+        "Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Range, If-Range, If-None-Match, X-Upload-Id, X-Chunk-Offset\r\n"
     )?;
     write!(stream, "Accept-Ranges: bytes\r\n")?;
     for (name, value) in headers {
@@ -804,12 +977,12 @@ fn send_headers(
     Ok(())
 }
 
-fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Result<()> {
+fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool, keep_alive: bool) -> io::Result<()> {
     let text = query_param(target, "text").unwrap_or_else(|| "/".to_string());
     let format = query_param(target, "format").unwrap_or_else(|| "svg".to_string());
     match format.as_str() {
         "bmp" => match qr_bmp(&text) {
-            Some(bytes) => send_binary(stream, 200, "OK", &bytes, "image/bmp", head_only),
+            Some(bytes) => send_binary(stream, 200, "OK", &bytes, "image/bmp", head_only, keep_alive),
             None => send_text(
                 stream,
                 400,
@@ -817,6 +990,7 @@ fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Res
                 "QR text is too long.",
                 "text/plain; charset=utf-8",
                 head_only,
+                keep_alive,
             ),
         },
         _ => match qr_svg(&text) {
@@ -827,6 +1001,7 @@ fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Res
                 &svg,
                 "image/svg+xml; charset=utf-8",
                 head_only,
+                keep_alive,
             ),
             None => send_text(
                 stream,
@@ -835,6 +1010,7 @@ fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool) -> io::Res
                 "QR text is too long.",
                 "text/plain; charset=utf-8",
                 head_only,
+                keep_alive,
             ),
         },
     }
@@ -915,7 +1091,7 @@ fn qr_bmp(text: &str) -> Option<Vec<u8>> {
     Some(bmp)
 }
 
-fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool) -> io::Result<()> {
+fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool, keep_alive: bool) -> io::Result<()> {
     let body = format!(
         "{{\"name\":\"StaticDock\",\"root\":\"{}\"}}",
         json_escape(&display_path(root))
@@ -927,6 +1103,7 @@ fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool) -> io::Re
         &body,
         "application/json; charset=utf-8",
         head_only,
+        keep_alive,
     )
 }
 
@@ -935,6 +1112,7 @@ fn send_api_list(
     root: &Path,
     target: &str,
     head_only: bool,
+    keep_alive: bool,
 ) -> io::Result<()> {
     let query_path = query_param(target, "path").unwrap_or_else(|| "/".to_string());
     let request_path = if query_path.starts_with('/') {
@@ -953,6 +1131,7 @@ fn send_api_list(
                 "{\"error\":\"forbidden\"}",
                 "application/json; charset=utf-8",
                 head_only,
+                keep_alive,
             )?;
             return Ok(());
         }
@@ -966,6 +1145,7 @@ fn send_api_list(
             "{\"error\":\"not found\"}",
             "application/json; charset=utf-8",
             head_only,
+            keep_alive,
         )?;
         return Ok(());
     }
@@ -980,6 +1160,7 @@ fn send_api_list(
                 "{\"error\":\"forbidden\"}",
                 "application/json; charset=utf-8",
                 head_only,
+                keep_alive,
             )?;
             return Ok(());
         }
@@ -993,6 +1174,7 @@ fn send_api_list(
             "{\"error\":\"not found\"}",
             "application/json; charset=utf-8",
             head_only,
+            keep_alive,
         )?;
         return Ok(());
     }
@@ -1069,6 +1251,7 @@ fn send_api_list(
         &body,
         "application/json; charset=utf-8",
         head_only,
+        keep_alive,
     )
 }
 
@@ -1280,6 +1463,8 @@ fn content_type(path: &Path) -> String {
         "wav" => "audio/wav",
         "m3u8" => "application/vnd.apple.mpegurl",
         "ts" => "video/mp2t",
+        "webmanifest" => "application/manifest+json",
+        "wasm" => "application/wasm",
         _ => "application/octet-stream",
     }
     .to_string()
@@ -1415,22 +1600,10 @@ fn is_special_ipv4(ip: &str) -> bool {
 
 #[cfg(windows)]
 fn platform_lan_addresses() -> Vec<(String, String)> {
-    let script = r#"Get-NetIPAddress -AddressFamily IPv4 |
-Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike '198.18.*' -and $_.IPAddress -notlike '198.19.*' -and $_.PrefixOrigin -ne 'WellKnown' } |
-Sort-Object @{Expression={if ($_.IPAddress -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)') { 0 } elseif ($_.InterfaceAlias -match 'VMware|Virtual|Loopback|VPN|TAP|TUN|WSL|Docker|Hyper-V') { 2 } else { 1 }}}, InterfaceMetric, InterfaceAlias |
-ForEach-Object { "$($_.IPAddress)|$($_.InterfaceAlias)" }"#;
-
-    let output = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .output();
-
-    parse_address_lines(output.ok().as_ref().map(|out| out.stdout.as_slice()))
+    let output = Command::new("ipconfig").output();
+    let binding = output.ok();
+    let bytes = binding.as_ref().map(|o| o.stdout.as_slice());
+    parse_ipconfig_output(bytes)
 }
 
 #[cfg(not(windows))]
@@ -1446,6 +1619,69 @@ fn platform_lan_addresses() -> Vec<(String, String)> {
     Vec::new()
 }
 
+fn parse_ipconfig_output(bytes: Option<&[u8]>) -> Vec<(String, String)> {
+    let Some(bytes) = bytes else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    let mut current_adapter = String::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            current_adapter.clear();
+            continue;
+        }
+
+        // Detect adapter header: "Ethernet adapter Wi-Fi:" or "Wireless LAN adapter ..."
+        if let Some(rest) = trimmed.strip_suffix(':') {
+            if rest.contains("adapter") || rest.contains("Adapter") {
+                current_adapter = rest.to_string();
+                continue;
+            }
+        }
+
+        // Detect IPv4 address line
+        if trimmed.starts_with("IPv4 Address") || trimmed.starts_with("ipv4 address") {
+            if let Some(ip) = trimmed.split(':').last() {
+                let ip = ip.trim();
+                if !ip.is_empty()
+                    && !is_special_ipv4(ip)
+                    && seen.insert(ip.to_string())
+                {
+                    let alias = if current_adapter.is_empty() {
+                        "network".to_string()
+                    } else {
+                        current_adapter.clone()
+                    };
+                    results.push((ip.to_string(), alias));
+                }
+            }
+        }
+    }
+
+    // Sort: private LAN first, then others
+    results.sort_by(|a, b| {
+        let a_private = is_private_ipv4(&a.0);
+        let b_private = is_private_ipv4(&b.0);
+        b_private.cmp(&a_private).then_with(|| a.1.cmp(&b.1))
+    });
+
+    results
+}
+
+fn is_private_ipv4(ip: &str) -> bool {
+    let parts: Vec<u8> = ip.split('.').filter_map(|p| p.parse().ok()).collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let (a, b) = (parts[0], parts[1]);
+    a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
+}
+
+#[allow(dead_code)]
 fn parse_address_lines(bytes: Option<&[u8]>) -> Vec<(String, String)> {
     let Some(bytes) = bytes else {
         return Vec::new();
@@ -1464,6 +1700,704 @@ fn parse_address_lines(bytes: Option<&[u8]>) -> Vec<(String, String)> {
     }
 
     result
+}
+
+// ── ETag support ──────────────────────────────────────────────────────
+
+fn generate_etag(size: u64, modified: SystemTime) -> String {
+    let mtime_secs = modified
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in size.to_le_bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    for byte in mtime_secs.to_le_bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("W/\"{:016x}\"", hash)
+}
+
+fn etag_matches(header_value: &str, etag: &str) -> bool {
+    let v = header_value.trim();
+    if v == "*" {
+        return true;
+    }
+    for part in v.split(',') {
+        let tag = part.trim();
+        // Weak comparison: strip W/" " prefix for comparison
+        let a = strip_weak_prefix(etag);
+        let b = strip_weak_prefix(tag);
+        if a == b {
+            return true;
+        }
+    }
+    false
+}
+
+fn strip_weak_prefix(s: &str) -> &str {
+    s.strip_prefix("W/").unwrap_or(s)
+}
+
+// ── Graceful shutdown handler ────────────────────────────────────────
+
+#[cfg(windows)]
+fn register_shutdown_handler() {
+    extern "system" {
+        fn SetConsoleCtrlHandler(handler: Option<extern "system" fn(u32) -> i32>, add: i32) -> i32;
+    }
+    extern "system" fn handler(ctrl_type: u32) -> i32 {
+        match ctrl_type {
+            0 | 2 => {
+                // CTRL_C_EVENT | CTRL_CLOSE_EVENT
+                SHUTDOWN.store(true, Ordering::SeqCst);
+                1
+            }
+            _ => 0,
+        }
+    }
+    unsafe {
+        SetConsoleCtrlHandler(Some(handler), 1);
+    }
+}
+
+#[cfg(not(windows))]
+fn register_shutdown_handler() {
+    unsafe {
+        libc_signal(2, sig_handler); // SIGINT
+        libc_signal(15, sig_handler); // SIGTERM
+    }
+}
+
+#[cfg(not(windows))]
+extern "C" fn sig_handler(_: i32) {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+#[cfg(not(windows))]
+unsafe fn libc_signal(signum: i32, handler: extern "C" fn(i32)) {
+    extern "C" {
+        fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+    }
+    unsafe {
+        signal(signum, handler);
+    }
+}
+
+// ── Upload API ───────────────────────────────────────────────────────
+
+fn read_body(stream: &mut TcpStream, content_length: usize, buf: &mut [u8], body_prefix: &[u8]) -> io::Result<Vec<u8>> {
+    let mut body = Vec::with_capacity(content_length.min(1024 * 1024));
+    // Use any body bytes already consumed during header parsing
+    let prefix_used = body_prefix.len().min(content_length);
+    if prefix_used > 0 {
+        body.extend_from_slice(&body_prefix[..prefix_used]);
+    }
+    let mut remaining = content_length.saturating_sub(prefix_used);
+    while remaining > 0 {
+        let to_read = remaining.min(buf.len());
+        let read = stream.read(&mut buf[..to_read])?;
+        if read == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..read]);
+        remaining -= read;
+    }
+    Ok(body)
+}
+
+fn read_body_to_file(
+    stream: &mut TcpStream,
+    content_length: u64,
+    dest: &Path,
+    buf: &mut [u8],
+    body_prefix: &[u8],
+) -> io::Result<u64> {
+    let mut file = File::create(dest)?;
+    let mut written = 0u64;
+    // Write any body bytes already consumed during header parsing
+    let prefix_len = body_prefix.len() as u64;
+    if prefix_len > 0 && prefix_len <= content_length {
+        file.write_all(&body_prefix[..prefix_len as usize])?;
+        written += prefix_len;
+    }
+    let mut remaining = content_length.saturating_sub(prefix_len);
+    while remaining > 0 {
+        let to_read = remaining.min(buf.len() as u64) as usize;
+        let read = stream.read(&mut buf[..to_read])?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buf[..read])?;
+        remaining -= read as u64;
+        written += read as u64;
+    }
+    Ok(written)
+}
+
+fn handle_upload_api(
+    stream: &mut TcpStream,
+    root: &Path,
+    target: &str,
+    request: &Request,
+    buf: &mut [u8],
+    keep_alive: bool,
+) -> io::Result<()> {
+    let content_length: usize = request
+        .headers
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let prefix = &request.body_prefix;
+
+    // Handle Expect: 100-continue
+    if request.headers.get("expect").map(|v| v.to_ascii_lowercase().contains("100-continue")).unwrap_or(false) {
+        stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+        stream.flush()?;
+    }
+
+    if target.contains("/upload/init") {
+        let body = read_body(stream, content_length, buf, prefix)?;
+        return handle_upload_init(stream, root, &body, keep_alive);
+    }
+    if target.contains("/upload/chunk") {
+        return handle_upload_chunk(stream, root, &request.headers, content_length as u64, buf, prefix, keep_alive);
+    }
+    if target.contains("/upload/finish") {
+        let body = read_body(stream, content_length, buf, prefix)?;
+        return handle_upload_finish(stream, root, &body, keep_alive);
+    }
+    if target.contains("/upload/status") {
+        return handle_upload_status(stream, root, target, keep_alive);
+    }
+    if target.contains("/upload/cancel") {
+        let body = read_body(stream, content_length, buf, prefix)?;
+        return handle_upload_cancel(stream, root, &body, keep_alive);
+    }
+
+    send_text(
+        stream,
+        404,
+        "Not Found",
+        "{\"error\":\"unknown upload endpoint\"}",
+        "application/json; charset=utf-8",
+        false,
+        keep_alive,
+    )
+}
+
+fn uploads_dir(root: &Path) -> PathBuf {
+    root.join(".staticdock-uploads")
+}
+
+fn session_dir(root: &Path, id: &str) -> PathBuf {
+    uploads_dir(root).join(id)
+}
+
+fn generate_upload_id() -> String {
+    use std::time::SystemTime;
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    // Simple pseudo-random hex from time + thread id
+    let tid = thread::current().id();
+    format!("{:016x}{:?}", t, tid)
+        .replace("ThreadId(", "")
+        .replace(")", "")
+        .chars()
+        .take(32)
+        .collect()
+}
+
+fn read_upload_meta(root: &Path, id: &str) -> Option<HashMap<String, String>> {
+    let meta_path = session_dir(root, id).join("meta.json");
+    let content = fs::read_to_string(meta_path).ok()?;
+    // Simple JSON parse for our known format
+    let mut map = HashMap::new();
+    for part in content.trim_matches(|c| c == '{' || c == '}' || c == ' ').split(',') {
+        if let Some((k, v)) = part.split_once(':') {
+            let k = k.trim().trim_matches('"');
+            let v = v.trim().trim_matches('"');
+            map.insert(k.to_string(), v.to_string());
+        }
+    }
+    Some(map)
+}
+
+fn write_upload_meta(root: &Path, id: &str, meta: &HashMap<String, String>) -> io::Result<()> {
+    let dir = session_dir(root, id);
+    fs::create_dir_all(&dir)?;
+    let mut json = String::from("{");
+    let mut first = true;
+    for (k, v) in meta {
+        if !first {
+            json.push(',');
+        }
+        first = false;
+        json.push('"');
+        json.push_str(k);
+        json.push_str("\":\"");
+        json.push_str(&json_escape(v));
+        json.push('"');
+    }
+    json.push('}');
+    fs::write(dir.join("meta.json"), json)
+}
+
+fn handle_upload_init(
+    stream: &mut TcpStream,
+    root: &Path,
+    body: &[u8],
+    keep_alive: bool,
+) -> io::Result<()> {
+    let body_str = String::from_utf8_lossy(body);
+    let mut meta = HashMap::new();
+
+    // Simple JSON field extraction
+    if let Some(path) = json_field(&body_str, "path") {
+        meta.insert("path".to_string(), path);
+    }
+    if let Some(filename) = json_field(&body_str, "filename") {
+        meta.insert("filename".to_string(), filename);
+    }
+    if let Some(size) = json_field(&body_str, "size") {
+        meta.insert("size".to_string(), size);
+    }
+    if let Some(mime) = json_field(&body_str, "mime") {
+        meta.insert("mime".to_string(), mime);
+    }
+
+    let filename = meta.get("filename").cloned().unwrap_or_default();
+    let target_path_str = meta.get("path").cloned().unwrap_or_else(|| "/".to_string());
+
+    // Validate filename
+    if filename.is_empty()
+        || filename.contains("..")
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains('\0')
+    {
+        return send_text(
+            stream,
+            400,
+            "Bad Request",
+            "{\"error\":\"invalid filename\"}",
+            "application/json; charset=utf-8",
+            false,
+            keep_alive,
+        );
+    }
+
+    // Validate target path stays within root
+    let resolved = match resolve_request_path(root, &target_path_str) {
+        Some(p) => p,
+        None => {
+            return send_text(
+                stream,
+                403,
+                "Forbidden",
+                "{\"error\":\"path not allowed\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let id = generate_upload_id();
+    meta.insert("id".to_string(), id.clone());
+    meta.insert("received_bytes".to_string(), "0".to_string());
+    meta.insert(
+        "created_at".to_string(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .to_string(),
+    );
+    // Strip Windows \\?\ extended path prefix for portable storage
+    let target_dir_str = resolved.display().to_string();
+    let target_dir_str = target_dir_str
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&target_dir_str)
+        .to_string();
+    meta.insert("target_dir".to_string(), target_dir_str);
+
+    if let Err(e) = write_upload_meta(root, &id, &meta) {
+        return send_text(
+            stream,
+            500,
+            "Internal Server Error",
+            &format!("{{\"error\":\"{}\"}}", json_escape(&e.to_string())),
+            "application/json; charset=utf-8",
+            false,
+            keep_alive,
+        );
+    }
+
+    let response = format!(
+        "{{\"id\":\"{}\",\"chunk_size\":{}}}",
+        json_escape(&id),
+        CHUNK_SIZE
+    );
+    send_text(
+        stream,
+        200,
+        "OK",
+        &response,
+        "application/json; charset=utf-8",
+        false,
+        keep_alive,
+    )
+}
+
+fn handle_upload_chunk(
+    stream: &mut TcpStream,
+    root: &Path,
+    headers: &HashMap<String, String>,
+    content_length: u64,
+    buf: &mut [u8],
+    body_prefix: &[u8],
+    keep_alive: bool,
+) -> io::Result<()> {
+    let upload_id = match headers.get("x-upload-id") {
+        Some(id) => id.trim().to_string(),
+        None => {
+            return send_text(
+                stream,
+                400,
+                "Bad Request",
+                "{\"error\":\"missing X-Upload-Id header\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let chunk_offset: u64 = headers
+        .get("x-chunk-offset")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    let meta = match read_upload_meta(root, &upload_id) {
+        Some(m) => m,
+        None => {
+            return send_text(
+                stream,
+                404,
+                "Not Found",
+                "{\"error\":\"upload session not found\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let chunk_index = chunk_offset / CHUNK_SIZE;
+    let chunk_path = session_dir(root, &upload_id).join(format!("chunk-{:06}", chunk_index));
+
+    // Stream body directly to file
+    let written = read_body_to_file(stream, content_length, &chunk_path, buf, body_prefix)?;
+
+    // Update received_bytes in meta
+    let mut new_meta = meta;
+    let prev_received: u64 = new_meta
+        .get("received_bytes")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    new_meta.insert(
+        "received_bytes".to_string(),
+        (prev_received + written).to_string(),
+    );
+    write_upload_meta(root, &upload_id, &new_meta)?;
+
+    let response = format!(
+        "{{\"ok\":true,\"offset\":{},\"written\":{}}}",
+        chunk_offset, written
+    );
+    send_text(
+        stream,
+        200,
+        "OK",
+        &response,
+        "application/json; charset=utf-8",
+        false,
+        keep_alive,
+    )
+}
+
+fn handle_upload_finish(
+    stream: &mut TcpStream,
+    root: &Path,
+    body: &[u8],
+    keep_alive: bool,
+) -> io::Result<()> {
+    let body_str = String::from_utf8_lossy(body);
+    let upload_id = match json_field(&body_str, "id") {
+        Some(id) => id,
+        None => {
+            return send_text(
+                stream,
+                400,
+                "Bad Request",
+                "{\"error\":\"missing id\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let meta = match read_upload_meta(root, &upload_id) {
+        Some(m) => m,
+        None => {
+            return send_text(
+                stream,
+                404,
+                "Not Found",
+                "{\"error\":\"upload session not found\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let filename = meta.get("filename").cloned().unwrap_or_default();
+    let target_dir = meta.get("target_dir").cloned().unwrap_or_default();
+    let _total_size: u64 = meta
+        .get("size")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let target_dir_path = PathBuf::from(&target_dir);
+    if !target_dir_path.exists() {
+        fs::create_dir_all(&target_dir_path)?;
+    }
+
+    let final_path = target_dir_path.join(&filename);
+    // Verify final path is inside root
+    let canonical_root = fs::canonicalize(root).ok();
+    if let Some(ref cr) = canonical_root {
+        let final_canonical = fs::canonicalize(final_path.parent().unwrap_or(&target_dir_path))
+            .unwrap_or_default();
+        if !final_canonical.starts_with(cr) {
+            return send_text(
+                stream,
+                403,
+                "Forbidden",
+                "{\"error\":\"target path outside root\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    }
+
+    // Merge chunks
+    let sess = session_dir(root, &upload_id);
+    let mut output = File::create(&final_path)?;
+    let mut chunk_files: Vec<_> = fs::read_dir(&sess)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("chunk-")
+        })
+        .collect();
+    chunk_files.sort_by_key(|e| e.file_name());
+
+    let mut merged_bytes = 0u64;
+    for chunk_entry in &chunk_files {
+        let mut chunk_file = File::open(chunk_entry.path())?;
+        let mut buf = vec![0u8; COPY_BUFFER_SIZE];
+        loop {
+            let read = chunk_file.read(&mut buf)?;
+            if read == 0 {
+                break;
+            }
+            output.write_all(&buf[..read])?;
+            merged_bytes += read as u64;
+        }
+    }
+
+    // Cleanup session
+    fs::remove_dir_all(&sess).ok();
+
+    let response = format!(
+        "{{\"ok\":true,\"filename\":\"{}\",\"bytes\":{}}}",
+        json_escape(&filename),
+        merged_bytes
+    );
+    send_text(
+        stream,
+        200,
+        "OK",
+        &response,
+        "application/json; charset=utf-8",
+        false,
+        keep_alive,
+    )
+}
+
+fn handle_upload_status(
+    stream: &mut TcpStream,
+    root: &Path,
+    target: &str,
+    keep_alive: bool,
+) -> io::Result<()> {
+    let upload_id = match query_param(target, "id") {
+        Some(id) => id,
+        None => {
+            return send_text(
+                stream,
+                400,
+                "Bad Request",
+                "{\"error\":\"missing id parameter\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let meta = match read_upload_meta(root, &upload_id) {
+        Some(m) => m,
+        None => {
+            return send_text(
+                stream,
+                404,
+                "Not Found",
+                "{\"error\":\"upload session not found\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let received: u64 = meta
+        .get("received_bytes")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let total: u64 = meta
+        .get("size")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let filename = meta.get("filename").cloned().unwrap_or_default();
+
+    let response = format!(
+        "{{\"id\":\"{}\",\"filename\":\"{}\",\"received_bytes\":{},\"total_size\":{}}}",
+        json_escape(&upload_id),
+        json_escape(&filename),
+        received,
+        total
+    );
+    send_text(
+        stream,
+        200,
+        "OK",
+        &response,
+        "application/json; charset=utf-8",
+        false,
+        keep_alive,
+    )
+}
+
+fn handle_upload_cancel(
+    stream: &mut TcpStream,
+    root: &Path,
+    body: &[u8],
+    keep_alive: bool,
+) -> io::Result<()> {
+    let body_str = String::from_utf8_lossy(body);
+    let upload_id = match json_field(&body_str, "id") {
+        Some(id) => id,
+        None => {
+            return send_text(
+                stream,
+                400,
+                "Bad Request",
+                "{\"error\":\"missing id\"}",
+                "application/json; charset=utf-8",
+                false,
+                keep_alive,
+            );
+        }
+    };
+
+    let sess = session_dir(root, &upload_id);
+    if sess.exists() {
+        fs::remove_dir_all(&sess).ok();
+    }
+
+    send_text(
+        stream,
+        200,
+        "OK",
+        "{\"ok\":true}",
+        "application/json; charset=utf-8",
+        false,
+        keep_alive,
+    )
+}
+
+fn cleanup_expired_uploads(root: &Path) {
+    let uploads = uploads_dir(root);
+    if !uploads.exists() {
+        return;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let entries = match fs::read_dir(&uploads) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if let Some(meta) = read_upload_meta(root, &id) {
+            let created: u64 = meta
+                .get("created_at")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            if now.saturating_sub(created) > UPLOAD_EXPIRY_SECS {
+                fs::remove_dir_all(entry.path()).ok();
+            }
+        }
+    }
+}
+
+fn json_field(json: &str, field: &str) -> Option<String> {
+    let pattern = format!("\"{}\"", field);
+    let idx = json.find(&pattern)?;
+    let rest = &json[idx + pattern.len()..];
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix(':')?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(json_unescape(&rest[..end]))
+}
+
+fn json_unescape(s: &str) -> String {
+    s.replace("\\\"", "\"")
+        .replace("\\\\", "\\")
+        .replace("\\n", "\n")
+        .replace("\\r", "")
+        .replace("\\t", "\t")
 }
 
 #[cfg(test)]
