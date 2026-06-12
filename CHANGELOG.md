@@ -2,6 +2,19 @@
 
 All notable changes to StaticDock are documented here.
 
+## v0.2.8
+
+### Highlights
+
+- Added an isolated native GUI settings mode for portable runs and repeatable verification: `StaticDockGui.exe --settings-dir <folder>`.
+- Added `STATICDOCK_SETTINGS_DIR` and `StaticDock.portable` support for users who do not want GUI settings to be stored under `%APPDATA%`.
+- Improved GUI startup diagnostics by logging the active settings file, server executable, mounted folder, launch command, and actual port.
+
+### Packages
+
+- `static-dock-windows-x64.zip`: recommended for most users; smaller package without loadtest assets.
+- `static-dock-windows-x64-with-loadtest.zip`: includes loadtest assets and scripts for local stress testing.
+
 ## v0.2.7
 
 ### Highlights

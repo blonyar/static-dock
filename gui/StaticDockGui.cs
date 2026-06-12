@@ -31,6 +31,7 @@ public class StaticDockForm : Form
     readonly string pidFile;
     readonly string settingsDir;
     readonly string settingsFile;
+    readonly string[] args;
 
     Process server;
     int actualPort = DefaultPort;
@@ -56,15 +57,42 @@ public class StaticDockForm : Form
 
     public StaticDockForm()
     {
+        args = Environment.GetCommandLineArgs();
         dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         exe = Path.Combine(dir, "static-dock.exe");
         iconFile = Path.Combine(dir, "assets\\icon.png");
-        settingsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StaticDock");
+        settingsDir = ResolveSettingsDir();
         pidFile = Path.Combine(settingsDir, "static-dock-server.pid");
         settingsFile = Path.Combine(settingsDir, "settings.ini");
         BuildUi();
         LoadSettings();
         ApplyLanguage();
+    }
+
+    string ResolveSettingsDir()
+    {
+        string cli = ArgValue("--settings-dir");
+        if (!String.IsNullOrWhiteSpace(cli)) return Path.GetFullPath(Environment.ExpandEnvironmentVariables(cli.Trim()));
+
+        string portable = Environment.GetEnvironmentVariable("STATICDOCK_SETTINGS_DIR");
+        if (!String.IsNullOrWhiteSpace(portable)) return Path.GetFullPath(Environment.ExpandEnvironmentVariables(portable.Trim()));
+
+        string portableMarker = Path.Combine(dir, "StaticDock.portable");
+        if (File.Exists(portableMarker)) return Path.Combine(dir, "settings");
+
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StaticDock");
+    }
+
+    string ArgValue(string name)
+    {
+        if (args == null) return null;
+        for (int i = 1; i < args.Length; i++)
+        {
+            string a = args[i];
+            if (String.Equals(a, name, StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length) return args[i + 1];
+            if (a.StartsWith(name + "=", StringComparison.OrdinalIgnoreCase)) return a.Substring(name.Length + 1);
+        }
+        return null;
     }
 
     string DefaultRoot()
@@ -113,6 +141,11 @@ public class StaticDockForm : Form
             case "hintRunning": return en ? "Server is running. Changing folder or port restarts automatically." : "服务运行中，修改目录或端口会自动重启。";
             case "hintChanged": return en ? "Settings changed. Restarting soon..." : "设置已变更，即将自动重启...";
             case "bootLog": return en ? "GUI is ready." : "GUI 已启动。";
+            case "settingsPath": return en ? "Settings file: " : "配置文件：";
+            case "serverExe": return en ? "Server executable: " : "服务程序：";
+            case "launchCommand": return en ? "Launch command: " : "启动命令：";
+            case "actualRoot": return en ? "Mounted folder: " : "挂载目录：";
+            case "actualPort": return en ? "Actual port: " : "实际端口：";
             case "restartLog": return en ? "Settings changed. Restarting server..." : "设置已变更，正在自动重启服务...";
             case "chooseFolder": return en ? "Choose the resource folder to mount" : "选择要挂载的资源目录";
             case "missingExe": return en ? "static-dock.exe was not found: " : "找不到 static-dock.exe：";
@@ -435,7 +468,7 @@ public class StaticDockForm : Form
         }
         catch { }
         langBox.SelectedIndex = lang == "en" ? 1 : 0;
-        loading = false; SaveSettings(); Log(T("bootLog")); if (autoStartBox.Checked) StartServer();
+        loading = false; SaveSettings(); Log(T("bootLog")); Log(T("settingsPath") + settingsFile); if (autoStartBox.Checked) StartServer();
     }
 
     void SetNum(NumericUpDown box, string text) { decimal v; if (Decimal.TryParse(text, out v) && v >= box.Minimum && v <= box.Maximum) box.Value = v; }
@@ -498,6 +531,10 @@ public class StaticDockForm : Form
             var psi = new ProcessStartInfo();
             psi.FileName = exe; psi.WorkingDirectory = root; psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
             psi.Arguments = "--root " + Q(root) + " --port " + actualPort + " --workers " + (int)workersBox.Value + " --queue " + (int)queueBox.Value;
+            Log(T("settingsPath") + settingsFile);
+            Log(T("serverExe") + exe);
+            Log(T("actualRoot") + root);
+            Log(T("launchCommand") + Q(exe) + " " + psi.Arguments);
             server = new Process(); server.StartInfo = psi;
             server.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) { if (e.Data.StartsWith("Port:")) { int p; if (Int32.TryParse(e.Data.Substring(5).Trim(), out p)) actualPort = p; } BeginInvoke(new Action(delegate { RefreshUrls(); })); } };
             server.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) BeginInvoke(new Action(delegate { if (!IsBenignNetworkError(e.Data)) Log("[error] " + e.Data); })); };
@@ -506,7 +543,7 @@ public class StaticDockForm : Form
             RefreshUrls(); lastUrls = BuildUrls(actualPort, root); TryWriteText(Path.Combine(settingsDir, "static-dock-urls.txt"), lastUrls);
             try { Clipboard.SetText(lastUrls); } catch { }
             SetRunning(true); RefreshUrls(); SaveSettings();
-            Log(T("launchSummary")); Log(T("serverConfig")); Log(T("port") + ": " + actualPort + "    " + T("workers") + ": " + (int)workersBox.Value + "    " + T("queue") + ": " + (int)queueBox.Value); Log(T("openTip"));
+            Log(T("launchSummary")); Log(T("serverConfig")); Log(T("actualPort") + actualPort); Log(T("port") + ": " + actualPort + "    " + T("workers") + ": " + (int)workersBox.Value + "    " + T("queue") + ": " + (int)queueBox.Value); Log(T("openTip"));
             if (openAfterStartBox.Checked) OpenUrl(localUrl);
         }
         catch (Exception ex) { Log(T("startFailed") + ex.Message); MessageBox.Show(this, ex.Message, T("startFailedTitle"), MessageBoxButtons.OK, MessageBoxIcon.Error); SetRunning(false); }

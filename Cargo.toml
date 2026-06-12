@@ -1,6 +1,6 @@
 [package]
 name = "static-dock"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "A portable local static resource server for LAN classrooms and Android testing."
 license = "MIT"

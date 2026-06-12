@@ -59,7 +59,8 @@ GUI 支持：
 - 选择挂载目录
 - 修改端口、workers 和 queue
 - 默认端口 `8787`，比 `8000/8080` 更不容易冲突
-- 记住上次使用的目录、端口和最近使用目录下拉列表，配置保存在 `%APPDATA%\StaticDock\settings.ini`
+- 记住上次使用的目录、端口和最近使用目录下拉列表，配置默认保存在 `%APPDATA%\StaticDock\settings.ini`
+- 支持便携/隔离配置：启动 `StaticDockGui.exe --settings-dir <目录>`，或设置环境变量 `STATICDOCK_SETTINGS_DIR`，或在程序目录放置 `StaticDock.portable` 标记文件后使用程序目录下的 `settings\`
 - 自动过滤 `198.18.x.x` 等虚拟/测试网段，优先显示真实局域网地址
 - 修改目录/端口时，如果服务正在运行，会自动重启生效
 - 一键恢复默认设置
