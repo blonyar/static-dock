@@ -19,14 +19,9 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  // Never cache API requests, upload endpoints, or data files
-  if (
-    url.pathname.startsWith('/__staticdock/api/') ||
-    url.pathname.startsWith('/data/') ||
-    url.pathname.startsWith('/videos/') ||
-    url.pathname.startsWith('/images/') ||
-    event.request.method !== 'GET'
-  ) {
+  // Never cache API requests, upload endpoints, resource files, or non-GET requests.
+  // Only the app shell listed in SHELL_URLS is cached for offline launch.
+  if (event.request.method !== 'GET' || !SHELL_URLS.includes(url.pathname)) {
     event.respondWith(fetch(event.request));
     return;
   }

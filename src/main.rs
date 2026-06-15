@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::net::{TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -23,6 +23,7 @@ const UPLOAD_EXPIRY_SECS: u64 = 86400; // 24 hours
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+static UPLOADS_ENABLED: AtomicBool = AtomicBool::new(true);
 
 thread_local! {
     static COPY_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; COPY_BUFFER_SIZE]);
@@ -32,6 +33,8 @@ thread_local! {
 struct Config {
     root: PathBuf,
     port: u16,
+    bind: IpAddr,
+    uploads_enabled: bool,
     workers: usize,
     queue_size: usize,
 }
@@ -54,23 +57,37 @@ fn main() {
 fn run() -> io::Result<()> {
     register_shutdown_handler();
     let config = parse_args()?;
-    let (listener, selected_port) = bind_listener(config.port)?;
+    UPLOADS_ENABLED.store(config.uploads_enabled, Ordering::SeqCst);
+    let (listener, selected_port) = bind_listener(config.bind, config.port)?;
     let root = fs::canonicalize(&config.root)?;
 
     println!();
     println!("Resource root: {}", display_path(&root));
     println!("Port: {selected_port}");
+    println!("Bind address: {}", config.bind);
+    println!(
+        "Uploads: {}",
+        if config.uploads_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!("Workers: {}", config.workers);
     println!("Queue size: {}", config.queue_size);
     println!();
     println!("PC local:          http://127.0.0.1:{selected_port}/");
 
-    let lan_addresses = get_lan_addresses();
-    if !lan_addresses.is_empty() {
-        println!("Phone/LAN URLs:");
-        for (ip, alias) in lan_addresses {
-            println!("  http://{ip}:{selected_port}/  ({alias})");
+    if config.bind.is_unspecified() {
+        let lan_addresses = get_lan_addresses();
+        if !lan_addresses.is_empty() {
+            println!("Phone/LAN URLs:");
+            for (ip, alias) in lan_addresses {
+                println!("  http://{ip}:{selected_port}/  ({alias})");
+            }
         }
+    } else {
+        println!("Phone/LAN URLs: disabled by bind address");
     }
 
     println!("Android emulator:  http://10.0.2.2:{selected_port}/");
@@ -84,7 +101,9 @@ fn run() -> io::Result<()> {
     println!("Keep this window open while using the server. Press Ctrl+C to stop.");
     println!();
 
-    cleanup_expired_uploads(&root);
+    if config.uploads_enabled {
+        cleanup_expired_uploads(&root);
+    }
 
     let (sender, receiver) = mpsc::sync_channel::<TcpStream>(config.queue_size);
     let receiver = Arc::new(Mutex::new(receiver));
@@ -95,7 +114,7 @@ fn run() -> io::Result<()> {
         thread::Builder::new()
             .name(format!("static-dock-worker-{worker_id}"))
             .stack_size(WORKER_STACK_SIZE)
-            .spawn(move || worker_loop(worker_id, receiver, root))
+            .spawn(move || worker_loop(worker_id, receiver, root, config.uploads_enabled))
             .map_err(io::Error::other)?;
     }
 
@@ -135,7 +154,12 @@ fn run() -> io::Result<()> {
     Ok(())
 }
 
-fn worker_loop(worker_id: usize, receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>, root: PathBuf) {
+fn worker_loop(
+    worker_id: usize,
+    receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>,
+    root: PathBuf,
+    uploads_enabled: bool,
+) {
     loop {
         let stream = {
             let guard = match receiver.lock() {
@@ -153,7 +177,9 @@ fn worker_loop(worker_id: usize, receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>
                 ACTIVE_REQUESTS.fetch_add(1, Ordering::SeqCst);
                 COPY_BUF.with(|buf_cell| {
                     let mut buf = buf_cell.borrow_mut();
-                    if let Err(err) = handle_connection(&mut stream, &root, &mut buf) {
+                    if let Err(err) =
+                        handle_connection(&mut stream, &root, uploads_enabled, &mut buf)
+                    {
                         if !is_benign_error(&err) {
                             eprintln!("Worker {worker_id} request failed: {err}");
                         }
@@ -180,6 +206,7 @@ fn is_benign_error(err: &io::Error) -> bool {
 fn handle_connection(
     stream: &mut TcpStream,
     root: &Path,
+    uploads_enabled: bool,
     buf: &mut [u8],
 ) -> io::Result<()> {
     let canonical_root = root.to_path_buf();
@@ -189,9 +216,7 @@ fn handle_connection(
             break;
         }
 
-        stream
-            .set_read_timeout(Some(KEEP_ALIVE_IDLE_TIMEOUT))
-            .ok();
+        stream.set_read_timeout(Some(KEEP_ALIVE_IDLE_TIMEOUT)).ok();
         stream
             .set_write_timeout(Some(Duration::from_secs(120)))
             .ok();
@@ -213,12 +238,13 @@ fn handle_connection(
         let keep_alive = wants_keepalive;
 
         if request.method == "OPTIONS" {
-            send_headers(
+            send_headers_with_uploads(
                 stream,
                 204,
                 "No Content",
                 &[("Content-Length", "0")],
                 keep_alive,
+                uploads_enabled,
             )?;
             if !keep_alive {
                 return Ok(());
@@ -228,7 +254,20 @@ fn handle_connection(
 
         // Upload API (POST allowed)
         if normalized_target.starts_with("/__staticdock/api/upload/") {
-            handle_upload_api(stream, root, &normalized_target, &request, buf, keep_alive)?;
+            if uploads_enabled {
+                handle_upload_api(stream, root, &normalized_target, &request, buf, keep_alive)?;
+            } else {
+                send_text(
+                    stream,
+                    403,
+                    "Forbidden",
+                    "{\"error\":\"uploads disabled\"}",
+                    "application/json; charset=utf-8",
+                    head_only,
+                    false,
+                )?;
+                return Ok(());
+            }
             if !keep_alive {
                 return Ok(());
             }
@@ -243,7 +282,7 @@ fn handle_connection(
                 "Method not allowed.",
                 "text/plain; charset=utf-8",
                 head_only,
-                &[("Allow", "GET, HEAD, OPTIONS, POST")],
+                &[allow_methods_header(uploads_enabled)],
                 keep_alive,
             )?;
             if !keep_alive {
@@ -377,11 +416,21 @@ fn handle_connection(
 }
 
 fn parse_args() -> io::Result<Config> {
+    parse_args_from(env::args().skip(1))
+}
+
+fn parse_args_from<I, S>(args: I) -> io::Result<Config>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let mut root: Option<PathBuf> = None;
     let mut port = 8787u16;
+    let mut bind = IpAddr::from([0, 0, 0, 0]);
+    let mut uploads_enabled = true;
     let mut workers = default_worker_count();
     let mut queue_size: Option<usize> = None;
-    let mut args = env::args().skip(1);
+    let mut args = args.into_iter().map(Into::into);
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -396,6 +445,18 @@ fn parse_args() -> io::Result<Config> {
                     io::Error::new(io::ErrorKind::InvalidInput, "missing value for --root")
                 })?;
                 root = Some(PathBuf::from(value));
+            }
+            "--bind" => {
+                let value = args.next().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "missing value for --bind")
+                })?;
+                bind = parse_bind_addr(&value)?;
+            }
+            "--no-upload" | "--no-uploads" => {
+                uploads_enabled = false;
+            }
+            "--uploads" => {
+                uploads_enabled = true;
             }
             "--workers" => {
                 let value = args.next().ok_or_else(|| {
@@ -418,6 +479,9 @@ fn parse_args() -> io::Result<Config> {
             }
             _ if arg.starts_with("--root=") => {
                 root = Some(PathBuf::from(&arg["--root=".len()..]));
+            }
+            _ if arg.starts_with("--bind=") => {
+                bind = parse_bind_addr(&arg["--bind=".len()..])?;
             }
             _ if arg.starts_with("--workers=") => {
                 workers = parse_limited_usize(&arg["--workers=".len()..], "workers", MAX_WORKERS)?;
@@ -450,6 +514,8 @@ fn parse_args() -> io::Result<Config> {
     Ok(Config {
         root,
         port,
+        bind,
+        uploads_enabled,
         workers: workers.min(MAX_WORKERS),
         queue_size,
     })
@@ -460,6 +526,15 @@ fn parse_port(value: &str) -> io::Result<u16> {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("invalid port: {value}"),
+        )
+    })
+}
+
+fn parse_bind_addr(value: &str) -> io::Result<IpAddr> {
+    value.parse::<IpAddr>().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid bind address: {value}"),
         )
     })
 }
@@ -498,11 +573,11 @@ fn default_worker_count() -> usize {
 
 fn print_help() {
     println!("Usage:");
-    println!("  static-dock.exe [--root PATH] [--port PORT] [--workers N] [--queue N]");
-    println!("  static-dock.exe PATH -p 8787 --workers 128");
+    println!("  static-dock.exe [--root PATH] [--port PORT] [--bind ADDR] [--no-upload|--uploads] [--workers N] [--queue N]");
+    println!("  static-dock.exe PATH -p 8787 --bind 127.0.0.1 --no-upload");
 }
 
-fn bind_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
+fn bind_listener(bind_addr: IpAddr, preferred_port: u16) -> io::Result<(TcpListener, u16)> {
     let candidates = [
         preferred_port,
         8787,
@@ -521,7 +596,7 @@ fn bind_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
             continue;
         }
 
-        match TcpListener::bind(("0.0.0.0", port)) {
+        match TcpListener::bind((bind_addr, port)) {
             Ok(listener) => {
                 let selected_port = listener.local_addr()?.port();
                 return Ok((listener, selected_port));
@@ -531,12 +606,18 @@ fn bind_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
         }
     }
 
-    let listener = TcpListener::bind(("0.0.0.0", 0))?;
+    let listener = TcpListener::bind((bind_addr, 0))?;
     let port = listener.local_addr()?.port();
     Ok((listener, port))
 }
 
-// end of handle_connection block
+fn allow_methods_header(uploads_enabled: bool) -> (&'static str, &'static str) {
+    if uploads_enabled {
+        ("Allow", "GET, HEAD, OPTIONS, POST")
+    } else {
+        ("Allow", "GET, HEAD, OPTIONS")
+    }
+}
 
 fn read_request(stream: &mut TcpStream, total_timeout: Duration) -> io::Result<Option<Request>> {
     let deadline = Instant::now() + total_timeout;
@@ -856,7 +937,12 @@ fn range_not_satisfiable(file_len: u64) -> io::Error {
     )
 }
 
-fn copy_limited(input: &mut File, output: &mut TcpStream, mut remaining: u64, buf: &mut [u8]) -> io::Result<()> {
+fn copy_limited(
+    input: &mut File,
+    output: &mut TcpStream,
+    mut remaining: u64,
+    buf: &mut [u8],
+) -> io::Result<()> {
     while remaining > 0 {
         let to_read = remaining.min(buf.len() as u64) as usize;
         let read = input.read(&mut buf[..to_read])?;
@@ -946,12 +1032,21 @@ fn send_binary(
     Ok(())
 }
 
-fn send_headers(
+fn cors_methods(uploads_enabled: bool) -> &'static str {
+    if uploads_enabled {
+        "GET, HEAD, OPTIONS, POST"
+    } else {
+        "GET, HEAD, OPTIONS"
+    }
+}
+
+fn send_headers_with_uploads(
     stream: &mut TcpStream,
     status: u16,
     reason: &str,
     headers: &[(&str, &str)],
     keep_alive: bool,
+    uploads_enabled: bool,
 ) -> io::Result<()> {
     write!(stream, "HTTP/1.1 {status} {reason}\r\n")?;
     write!(stream, "Server: StaticDock/1.0\r\n")?;
@@ -963,7 +1058,8 @@ fn send_headers(
     write!(stream, "Access-Control-Allow-Origin: *\r\n")?;
     write!(
         stream,
-        "Access-Control-Allow-Methods: GET, HEAD, OPTIONS, POST\r\n"
+        "Access-Control-Allow-Methods: {}\r\n",
+        cors_methods(uploads_enabled)
     )?;
     write!(
         stream,
@@ -977,12 +1073,42 @@ fn send_headers(
     Ok(())
 }
 
-fn send_api_qr(stream: &mut TcpStream, target: &str, head_only: bool, keep_alive: bool) -> io::Result<()> {
+fn send_headers(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+    headers: &[(&str, &str)],
+    keep_alive: bool,
+) -> io::Result<()> {
+    send_headers_with_uploads(
+        stream,
+        status,
+        reason,
+        headers,
+        keep_alive,
+        UPLOADS_ENABLED.load(Ordering::SeqCst),
+    )
+}
+
+fn send_api_qr(
+    stream: &mut TcpStream,
+    target: &str,
+    head_only: bool,
+    keep_alive: bool,
+) -> io::Result<()> {
     let text = query_param(target, "text").unwrap_or_else(|| "/".to_string());
     let format = query_param(target, "format").unwrap_or_else(|| "svg".to_string());
     match format.as_str() {
         "bmp" => match qr_bmp(&text) {
-            Some(bytes) => send_binary(stream, 200, "OK", &bytes, "image/bmp", head_only, keep_alive),
+            Some(bytes) => send_binary(
+                stream,
+                200,
+                "OK",
+                &bytes,
+                "image/bmp",
+                head_only,
+                keep_alive,
+            ),
             None => send_text(
                 stream,
                 400,
@@ -1091,7 +1217,12 @@ fn qr_bmp(text: &str) -> Option<Vec<u8>> {
     Some(bmp)
 }
 
-fn send_api_info(stream: &mut TcpStream, root: &Path, head_only: bool, keep_alive: bool) -> io::Result<()> {
+fn send_api_info(
+    stream: &mut TcpStream,
+    root: &Path,
+    head_only: bool,
+    keep_alive: bool,
+) -> io::Result<()> {
     let body = format!(
         "{{\"name\":\"StaticDock\",\"root\":\"{}\"}}",
         json_escape(&display_path(root))
@@ -1647,10 +1778,7 @@ fn parse_ipconfig_output(bytes: Option<&[u8]>) -> Vec<(String, String)> {
         if trimmed.starts_with("IPv4 Address") || trimmed.starts_with("ipv4 address") {
             if let Some(ip) = trimmed.split(':').last() {
                 let ip = ip.trim();
-                if !ip.is_empty()
-                    && !is_special_ipv4(ip)
-                    && seen.insert(ip.to_string())
-                {
+                if !ip.is_empty() && !is_special_ipv4(ip) && seen.insert(ip.to_string()) {
                     let alias = if current_adapter.is_empty() {
                         "network".to_string()
                     } else {
@@ -1789,7 +1917,12 @@ unsafe fn libc_signal(signum: i32, handler: extern "C" fn(i32)) {
 
 // ── Upload API ───────────────────────────────────────────────────────
 
-fn read_body(stream: &mut TcpStream, content_length: usize, buf: &mut [u8], body_prefix: &[u8]) -> io::Result<Vec<u8>> {
+fn read_body(
+    stream: &mut TcpStream,
+    content_length: usize,
+    buf: &mut [u8],
+    body_prefix: &[u8],
+) -> io::Result<Vec<u8>> {
     let mut body = Vec::with_capacity(content_length.min(1024 * 1024));
     // Use any body bytes already consumed during header parsing
     let prefix_used = body_prefix.len().min(content_length);
@@ -1854,7 +1987,12 @@ fn handle_upload_api(
     let prefix = &request.body_prefix;
 
     // Handle Expect: 100-continue
-    if request.headers.get("expect").map(|v| v.to_ascii_lowercase().contains("100-continue")).unwrap_or(false) {
+    if request
+        .headers
+        .get("expect")
+        .map(|v| v.to_ascii_lowercase().contains("100-continue"))
+        .unwrap_or(false)
+    {
         stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
         stream.flush()?;
     }
@@ -1864,7 +2002,15 @@ fn handle_upload_api(
         return handle_upload_init(stream, root, &body, keep_alive);
     }
     if target.contains("/upload/chunk") {
-        return handle_upload_chunk(stream, root, &request.headers, content_length as u64, buf, prefix, keep_alive);
+        return handle_upload_chunk(
+            stream,
+            root,
+            &request.headers,
+            content_length as u64,
+            buf,
+            prefix,
+            keep_alive,
+        );
     }
     if target.contains("/upload/finish") {
         let body = read_body(stream, content_length, buf, prefix)?;
@@ -1918,7 +2064,10 @@ fn read_upload_meta(root: &Path, id: &str) -> Option<HashMap<String, String>> {
     let content = fs::read_to_string(meta_path).ok()?;
     // Simple JSON parse for our known format
     let mut map = HashMap::new();
-    for part in content.trim_matches(|c| c == '{' || c == '}' || c == ' ').split(',') {
+    for part in content
+        .trim_matches(|c| c == '{' || c == '}' || c == ' ')
+        .split(',')
+    {
         if let Some((k, v)) = part.split_once(':') {
             let k = k.trim().trim_matches('"');
             let v = v.trim().trim_matches('"');
@@ -2171,10 +2320,7 @@ fn handle_upload_finish(
 
     let filename = meta.get("filename").cloned().unwrap_or_default();
     let target_dir = meta.get("target_dir").cloned().unwrap_or_default();
-    let _total_size: u64 = meta
-        .get("size")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let _total_size: u64 = meta.get("size").and_then(|v| v.parse().ok()).unwrap_or(0);
 
     let target_dir_path = PathBuf::from(&target_dir);
     if !target_dir_path.exists() {
@@ -2185,8 +2331,8 @@ fn handle_upload_finish(
     // Verify final path is inside root
     let canonical_root = fs::canonicalize(root).ok();
     if let Some(ref cr) = canonical_root {
-        let final_canonical = fs::canonicalize(final_path.parent().unwrap_or(&target_dir_path))
-            .unwrap_or_default();
+        let final_canonical =
+            fs::canonicalize(final_path.parent().unwrap_or(&target_dir_path)).unwrap_or_default();
         if !final_canonical.starts_with(cr) {
             return send_text(
                 stream,
@@ -2205,11 +2351,7 @@ fn handle_upload_finish(
     let mut output = File::create(&final_path)?;
     let mut chunk_files: Vec<_> = fs::read_dir(&sess)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("chunk-")
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with("chunk-"))
         .collect();
     chunk_files.sort_by_key(|e| e.file_name());
 
@@ -2286,10 +2428,7 @@ fn handle_upload_status(
         .get("received_bytes")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let total: u64 = meta
-        .get("size")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let total: u64 = meta.get("size").and_then(|v| v.parse().ok()).unwrap_or(0);
     let filename = meta.get("filename").cloned().unwrap_or_default();
 
     let response = format!(
@@ -2464,8 +2603,40 @@ mod tests {
     }
 
     #[test]
-    fn address_lines_are_deduplicated() {
-        let input = b"192.168.1.2|Wi-Fi\n192.168.1.2|Other\n10.0.0.2|LAN\n";
-        assert_eq!(parse_address_lines(Some(input)).len(), 2);
+    fn parse_args_supports_bind_and_upload_controls() {
+        let config = parse_args_from([
+            "--bind",
+            "127.0.0.1",
+            "--no-upload",
+            "--port=9090",
+            "--queue",
+            "512",
+            "C:/tmp/staticdock-root",
+        ])
+        .unwrap();
+        assert_eq!(config.bind, IpAddr::from([127, 0, 0, 1]));
+        assert!(!config.uploads_enabled);
+        assert_eq!(config.port, 9090);
+        assert_eq!(config.queue_size, 512);
+        assert_eq!(config.root, PathBuf::from("C:/tmp/staticdock-root"));
+
+        let config = parse_args_from(["--no-upload", "--uploads", "--bind=0.0.0.0"]).unwrap();
+        assert_eq!(config.bind, IpAddr::from([0, 0, 0, 0]));
+        assert!(config.uploads_enabled);
+    }
+
+    #[test]
+    fn bind_listener_honors_loopback_bind_address() {
+        let (listener, port) = bind_listener(IpAddr::from([127, 0, 0, 1]), 0).unwrap();
+        assert!(port > 0);
+        assert!(listener.local_addr().unwrap().ip().is_loopback());
+    }
+
+    #[test]
+    fn allow_methods_reflect_upload_setting() {
+        assert_eq!(allow_methods_header(true).1, "GET, HEAD, OPTIONS, POST");
+        assert_eq!(allow_methods_header(false).1, "GET, HEAD, OPTIONS");
+        assert_eq!(cors_methods(true), "GET, HEAD, OPTIONS, POST");
+        assert_eq!(cors_methods(false), "GET, HEAD, OPTIONS");
     }
 }

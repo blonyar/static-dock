@@ -10,7 +10,7 @@ src/main.rs
 
 Rust HTTP server. Responsibilities:
 
-- Parse CLI options: `--root`, `--port`, `--workers`, `--queue`.
+- Parse CLI options: `--root`, `--port`, `--bind`, `--no-upload` / `--uploads`, `--workers`, `--queue`.
 - Serve static files with CORS, HTTP Range, ETag and Keep-Alive support.
 - Expose resource-manager APIs under `/__staticdock/api/*`.
 - Expose upload APIs under `/__staticdock/api/upload/*` (init, chunk, finish, status, cancel).
@@ -19,6 +19,7 @@ Rust HTTP server. Responsibilities:
 - Graceful shutdown: wait for in-flight requests on Ctrl+C (up to 30 seconds).
 - Buffer reuse: each worker thread reuses a single 256 KB buffer via `thread_local!`.
 - Keep request handling dependency-free and portable.
+- Trusted-LAN posture: by default the server binds to `0.0.0.0` for LAN access and enables uploads for the classic workflow; use `--bind 127.0.0.1` for local-only mode and `--no-upload` to disable all upload endpoints when the mounted folder must be read-only.
 
 ```text
 gui/StaticDockGui.cs
@@ -86,14 +87,14 @@ Loadtest data set used by the full release package.
 All API endpoints live under `/__staticdock/api/` and return JSON unless noted.
 
 ```text
-GET  /api/list?path=/         List directory entries (name, url, kind, bytes, modified)
-GET  /api/info                Server info (name, root path)
-GET  /api/qr?text=URL&format=svg|bmp   QR code image
-POST /api/upload/init         Create upload session (path, filename, size, mime → id, chunk_size)
-POST /api/upload/chunk        Upload a 1 MB chunk (X-Upload-Id, X-Chunk-Offset headers)
-POST /api/upload/finish       Merge chunks into final file (id → filename, bytes)
-GET  /api/upload/status?id=X  Query upload progress (received_bytes, total_size)
-POST /api/upload/cancel       Cancel and clean up upload session (id)
+GET  /__staticdock/api/list?path=/         List directory entries (name, url, kind, bytes, modified)
+GET  /__staticdock/api/info                Server info (name, root path)
+GET  /__staticdock/api/qr?text=URL&format=svg|bmp   QR code image
+POST /__staticdock/api/upload/init         Create upload session (path, filename, size, mime → id, chunk_size)
+POST /__staticdock/api/upload/chunk        Upload a 1 MB chunk (X-Upload-Id, X-Chunk-Offset headers)
+POST /__staticdock/api/upload/finish       Merge chunks into final file (id → filename, bytes)
+GET  /__staticdock/api/upload/status?id=X  Query upload progress (received_bytes, total_size)
+POST /__staticdock/api/upload/cancel       Cancel and clean up upload session (id)
 ```
 
 Upload sessions are stored under `<root>/.staticdock-uploads/<id>/` and expire after 24 hours.

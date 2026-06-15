@@ -54,7 +54,7 @@ public class StaticDockForm : Form
     NumericUpDown portBox, workersBox, queueBox;
     Button browseBtn, openFolderBtn, startBtn, stopBtn, checkPortBtn, resetBtn, advancedBtn;
     Button openLocalBtn, copyLocalBtn, qrLanBtn, copyLanBtn, copyEmulatorBtn, copyAllBtn;
-    CheckBox autoStartBox, openAfterStartBox;
+    CheckBox autoStartBox, openAfterStartBox, lanAccessBox, uploadsBox;
     ComboBox langBox;
     Panel advancedPanel;
     Timer restartTimer, monitorTimer;
@@ -139,6 +139,12 @@ public class StaticDockForm : Form
             case "port": return en ? "Port" : "端口";
             case "workers": return en ? "Worker threads" : "工作线程";
             case "queue": return en ? "Queue size" : "队列长度";
+            case "lanAccess": return en ? "Allow LAN / phone access" : "允许局域网/手机访问";
+            case "uploads": return en ? "Enable browser uploads" : "启用浏览器上传";
+            case "safetyLocal": return en ? "Local-only mode. Use LAN access only on trusted networks." : "本机模式。仅在可信网络中启用局域网访问。";
+            case "safetyLan": return en ? "Trusted LAN mode: devices on this network can browse this folder." : "可信局域网模式：同网络设备可浏览此目录。";
+            case "safetyUpload": return en ? "Uploads are unauthenticated. Mount only a safe folder." : "上传无鉴权，请只挂载安全目录。";
+            case "bind": return en ? "Bind" : "绑定";
             case "autostart": return en ? "Auto start service when GUI opens" : "启动时自动开启服务";
             case "openAfterStart": return en ? "Open resource manager after start" : "启动后自动打开资源库";
             case "hintDefault": return en ? "Default: resources folder, port 8787. Settings are saved automatically." : "默认挂载 resources，端口 8787。设置会自动保存。";
@@ -179,8 +185,8 @@ public class StaticDockForm : Form
         Text = T("title");
         TryLoadWindowIcon();
         StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(980, 680);
-        MinimumSize = new Size(900, 620);
+        Size = new Size(980, 710);
+        MinimumSize = new Size(900, 650);
         Font = new Font("Microsoft YaHei UI", 9f);
         BackColor = Color.FromArgb(245, 247, 251);
 
@@ -241,7 +247,7 @@ public class StaticDockForm : Form
         copyEmulatorBtn = SmallButton(addrPanel, 805, 104); copyEmulatorBtn.Click += delegate { CopyUrl(emulatorUrl); };
         copyAllBtn = SmallButton(addrPanel, 720, 104); copyAllBtn.Click += delegate { CopyUrl(lastUrls); };
 
-        advancedPanel = Card(24, 476, 930, 72);
+        advancedPanel = Card(24, 476, 930, 102);
         advancedTitle = MakeLabel(advancedPanel, 16, 12, 160, 24);
         advancedBtn = Button(advancedPanel, 760, 20, 140, 32); advancedBtn.Click += delegate { SetAdvancedVisible(!advancedVisible); };
         portLabel = MakeLabel(advancedPanel, 16, 42, 70, 24);
@@ -253,8 +259,12 @@ public class StaticDockForm : Form
         queueLabel = MakeLabel(advancedPanel, 435, 42, 100, 24);
         queueBox = new NumericUpDown { Left = 540, Top = 40, Width = 110, Minimum = 1, Maximum = 4096, Value = DefaultQueue };
         queueBox.ValueChanged += SettingChanged; advancedPanel.Controls.Add(queueBox);
+        lanAccessBox = new CheckBox { Left = 16, Top = 74, Width = 220, Height = 24, Checked = true };
+        lanAccessBox.CheckedChanged += SettingChanged; advancedPanel.Controls.Add(lanAccessBox);
+        uploadsBox = new CheckBox { Left = 260, Top = 74, Width = 220, Height = 24, Checked = true };
+        uploadsBox.CheckedChanged += SettingChanged; advancedPanel.Controls.Add(uploadsBox);
 
-        logBox = new TextBox { Left = 24, Top = 560, Width = 930, Height = 78, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };
+        logBox = new TextBox { Left = 24, Top = 590, Width = 930, Height = 78, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true, Font = new Font("Consolas", 9f), BackColor = Color.FromArgb(15, 23, 42), ForeColor = Color.FromArgb(226, 232, 240) };
         Controls.Add(logBox);
 
         restartTimer = new Timer(); restartTimer.Interval = 900;
@@ -315,14 +325,14 @@ public class StaticDockForm : Form
         autoStartBox.Text = T("autostart"); openAfterStartBox.Text = T("openAfterStart"); hintLabel.Text = IsRunning() ? T("hintRunning") : T("hintDefault");
         addressLabel.Text = T("addresses"); localTitle.Text = T("local"); lanTitle.Text = T("lan"); emulatorTitle.Text = T("emulator");
         openLocalBtn.Text = T("open"); copyLocalBtn.Text = T("copy"); qrLanBtn.Text = T("qr"); copyLanBtn.Text = T("copy"); copyEmulatorBtn.Text = T("copy"); copyAllBtn.Text = T("copyAll");
-        advancedTitle.Text = T("advanced"); portLabel.Text = T("port"); workersLabel.Text = T("workers"); queueLabel.Text = T("queue"); advancedBtn.Text = advancedVisible ? T("advancedHide") : T("advancedShow");
+        advancedTitle.Text = T("advanced"); portLabel.Text = T("port"); workersLabel.Text = T("workers"); queueLabel.Text = T("queue"); lanAccessBox.Text = T("lanAccess"); uploadsBox.Text = T("uploads"); advancedBtn.Text = advancedVisible ? T("advancedHide") : T("advancedShow");
         RefreshUrls();
     }
 
     void SetAdvancedVisible(bool visible)
     {
         advancedVisible = visible;
-        workersLabel.Visible = visible; workersBox.Visible = visible; queueLabel.Visible = visible; queueBox.Visible = visible;
+        workersLabel.Visible = visible; workersBox.Visible = visible; queueLabel.Visible = visible; queueBox.Visible = visible; lanAccessBox.Visible = visible; uploadsBox.Visible = visible;
         advancedBtn.Text = visible ? T("advancedHide") : T("advancedShow");
     }
 
@@ -340,7 +350,7 @@ public class StaticDockForm : Form
         int port = actualPort > 0 ? actualPort : (int)portBox.Value;
         localUrl = "http://127.0.0.1:" + port + "/?lang=" + lang;
         emulatorUrl = "http://10.0.2.2:" + port + "/?lang=" + lang;
-        lanUrl = FirstLanUrl(port);
+        lanUrl = lanAccessBox.Checked ? FirstLanUrl(port) : "";
         if (IsRunning()) { localText.Text = localUrl; lanText.Text = String.IsNullOrEmpty(lanUrl) ? "-" : lanUrl; emulatorText.Text = emulatorUrl; lastUrls = BuildUrls(port, rootText.Text); }
     }
 
@@ -424,7 +434,7 @@ public class StaticDockForm : Form
     void CheckPort()
     {
         int port = (int)portBox.Value;
-        try { TcpListener listener = new TcpListener(IPAddress.Any, port); listener.Start(); listener.Stop(); Log(T("portFree") + port); }
+        try { TcpListener listener = new TcpListener(lanAccessBox.Checked ? IPAddress.Any : IPAddress.Loopback, port); listener.Start(); listener.Stop(); Log(T("portFree") + port); }
         catch { Log(T("portBusy") + port); }
     }
 
@@ -445,7 +455,7 @@ public class StaticDockForm : Form
         if (ask && IsRunning() && MessageBox.Show(this, T("resetAsk"), T("title"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         bool wasRunning = IsRunning(); if (wasRunning) StopServer(false);
         loading = true;
-        rootText.Text = DefaultRoot(); AddRecentRoot(rootText.Text); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
+        rootText.Text = DefaultRoot(); AddRecentRoot(rootText.Text); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; lanAccessBox.Checked = true; uploadsBox.Checked = true; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
         loading = false; SaveSettings(); RefreshUrls(); Log(T("resetDone")); if (wasRunning) StartServer();
     }
 
@@ -453,7 +463,7 @@ public class StaticDockForm : Form
     {
         loading = true;
         rootText.Items.Clear();
-        rootText.Text = DefaultRoot(); AddRecentRoot(rootText.Text); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
+        rootText.Text = DefaultRoot(); AddRecentRoot(rootText.Text); portBox.Value = DefaultPort; workersBox.Value = DefaultWorkers; queueBox.Value = DefaultQueue; lanAccessBox.Checked = true; uploadsBox.Checked = true; autoStartBox.Checked = false; openAfterStartBox.Checked = false;
         try
         {
             if (File.Exists(settingsFile)) foreach (string line in File.ReadAllLines(settingsFile))
@@ -464,6 +474,8 @@ public class StaticDockForm : Form
                 else if (k == "port") SetNum(portBox, v);
                 else if (k == "workers") SetNum(workersBox, v);
                 else if (k == "queue") SetNum(queueBox, v);
+                else if (k == "lanAccess") lanAccessBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
+                else if (k == "uploads") uploadsBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
                 else if (k == "lang") lang = v == "en" ? "en" : "zh";
                 else if (k == "autoStart") autoStartBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
                 else if (k == "openAfterStart") openAfterStartBox.Checked = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -481,7 +493,7 @@ public class StaticDockForm : Form
         try
         {
             if (!Directory.Exists(settingsDir)) Directory.CreateDirectory(settingsDir);
-            File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lang=" + lang, "autoStart=" + (autoStartBox.Checked ? "1" : "0"), "openAfterStart=" + (openAfterStartBox.Checked ? "1" : "0"), "recentRoots=" + RecentRootsLine() });
+            File.WriteAllLines(settingsFile, new string[] { "root=" + rootText.Text, "port=" + (int)portBox.Value, "workers=" + (int)workersBox.Value, "queue=" + (int)queueBox.Value, "lanAccess=" + (lanAccessBox.Checked ? "1" : "0"), "uploads=" + (uploadsBox.Checked ? "1" : "0"), "lang=" + lang, "autoStart=" + (autoStartBox.Checked ? "1" : "0"), "openAfterStart=" + (openAfterStartBox.Checked ? "1" : "0"), "recentRoots=" + RecentRootsLine() });
         }
         catch (Exception ex) { Log("[warn] SaveSettings: " + ex.Message); }
     }
@@ -534,7 +546,7 @@ public class StaticDockForm : Form
             StopServer(false); logBox.Clear(); actualPort = (int)portBox.Value;
             var psi = new ProcessStartInfo();
             psi.FileName = exe; psi.WorkingDirectory = root; psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
-            psi.Arguments = "--root " + Q(root) + " --port " + actualPort + " --workers " + (int)workersBox.Value + " --queue " + (int)queueBox.Value;
+            psi.Arguments = "--root " + Q(root) + " --port " + actualPort + " --bind " + (lanAccessBox.Checked ? "0.0.0.0" : "127.0.0.1") + (uploadsBox.Checked ? " --uploads" : " --no-upload") + " --workers " + (int)workersBox.Value + " --queue " + (int)queueBox.Value;
             Log(T("settingsPath") + settingsFile);
             Log(T("serverExe") + exe);
             Log(T("actualRoot") + root);
@@ -547,7 +559,7 @@ public class StaticDockForm : Form
             RefreshUrls(); lastUrls = BuildUrls(actualPort, root); TryWriteText(Path.Combine(settingsDir, "static-dock-urls.txt"), lastUrls);
             try { Clipboard.SetText(lastUrls); } catch { }
             SetRunning(true); RefreshUrls(); SaveSettings();
-            Log(T("launchSummary")); Log(T("serverConfig")); Log(T("actualPort") + actualPort); Log(T("port") + ": " + actualPort + "    " + T("workers") + ": " + (int)workersBox.Value + "    " + T("queue") + ": " + (int)queueBox.Value); Log(T("openTip"));
+            Log(T("launchSummary")); Log(T("serverConfig")); Log(T("actualPort") + actualPort); Log(T("bind") + ": " + (lanAccessBox.Checked ? "0.0.0.0" : "127.0.0.1") + "    " + T("uploads") + ": " + (uploadsBox.Checked ? "ON" : "OFF")); if (lanAccessBox.Checked) Log(T("safetyLan")); else Log(T("safetyLocal")); if (uploadsBox.Checked) Log(T("safetyUpload")); Log(T("port") + ": " + actualPort + "    " + T("workers") + ": " + (int)workersBox.Value + "    " + T("queue") + ": " + (int)queueBox.Value); Log(T("openTip"));
             if (openAfterStartBox.Checked) OpenUrl(localUrl);
         }
         catch (Exception ex) { Log(T("startFailed") + ex.Message); MessageBox.Show(this, ex.Message, T("startFailedTitle"), MessageBoxButtons.OK, MessageBoxIcon.Error); SetRunning(false); }
@@ -569,7 +581,7 @@ public class StaticDockForm : Form
     string BuildUrls(int port, string root)
     {
         string local = "http://127.0.0.1:" + port + "/?lang=" + lang;
-        string lan = FirstLanUrl(port);
+        string lan = lanAccessBox.Checked ? FirstLanUrl(port) : "";
         string emulator = "http://10.0.2.2:" + port + "/?lang=" + lang;
         var lines = new List<string>();
         lines.Add(T("local") + ": " + local);
