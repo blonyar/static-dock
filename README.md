@@ -20,6 +20,12 @@ StaticDock 是一个轻量、可随身携带的本地静态资源服务器。它
 - 无运行时依赖：不需要 Node.js、Python、npm 包
 - 支持目录挂载、端口配置、worker 线程数和请求队列
 - 支持 HTTP Range：MP4 点播、拖动进度条可用
+- 支持 HTTP Keep-Alive：连接复用，批量加载更流畅
+- 支持 ETag + 304 Not Modified：重复请求零传输
+- 支持文件上传：浏览器拖拽或点击上传，大文件 1 MB 分块续传，实时进度和速度
+- 支持 PWA：添加到手机桌面，离线可打开管理台界面
+- 支持移动端 UI：底部导航栏、安全区适配、44px 触控目标
+- 优雅关机：Ctrl+C 等待进行中的请求完成（最多 30 秒）
 - 支持局域网、电脑热点、Android 模拟器访问
 - 提供 Windows 桌面 GUI 启动器
 - 提供并发压测脚本和测试素材
@@ -69,6 +75,16 @@ GUI 支持：
 - 复制手机/模拟器/局域网访问地址
 - 一键打开局域网/手机访问二维码，手机扫码访问
 - 显示运行状态和服务日志
+
+浏览器资源管理台支持：
+
+- 目录浏览、文件搜索和类型筛选
+- 图片、视频、音频、JSON、代码在线预览
+- 右键菜单：预览、新标签打开、下载、复制 URL
+- 拖拽或按钮上传文件，大文件自动分块续传，显示进度和速度
+- 局域网/手机二维码，一键扫码访问
+- 中/英双语切换
+- PWA 添加到手机桌面，离线打开管理台
 
 如果只想用命令行窗口直接启动，双击：
 
@@ -155,6 +171,35 @@ StaticDock 支持普通 MP4 点播需要的能力：
 
 它不是直播/转码服务器，不提供 RTMP、WebRTC、HLS 自动切片或自适应码率。
 
+## 文件上传
+
+浏览器资源管理台支持上传文件到当前目录：
+
+- 拖拽文件到页面，或点击上传按钮选择文件
+- 大文件自动分割为 1 MB 分块，断点续传
+- 实时显示上传进度和传输速度
+- 上传完成后自动刷新目录列表
+
+API 端点：
+
+```text
+POST /__staticdock/api/upload/init     创建上传会话
+POST /__staticdock/api/upload/chunk    上传一个分块
+POST /__staticdock/api/upload/finish   合并分块完成上传
+GET  /__staticdock/api/upload/status   查询上传进度
+POST /__staticdock/api/upload/cancel   取消上传
+```
+
+上传会话 24 小时后自动清理。
+
+## PWA 支持
+
+StaticDock 提供 PWA（Progressive Web App）支持：
+
+- 浏览器可"添加到主屏幕"，像原生 App 一样打开
+- 管理台界面离线可用（Service Worker 缓存 app shell）
+- 资源文件不会被缓存，始终从服务器获取最新内容
+
 ## 压测
 
 仓库带有 `loadtest/` 示例数据，包含图片和 JSON。源码开发环境中运行：
@@ -198,7 +243,7 @@ build-windows.bat
 本项目提供一键发布脚本，会更新版本号、构建 Windows 包、运行 release 检查、提交、打 tag、推送并创建 GitHub Release。Release notes 默认优先读取 `CHANGELOG.md` 中对应版本，也可通过 `-NotesFile` 指定：
 
 ```powershell
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/release/release.ps1 -Version v0.2.5
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/release/release.ps1 -Version v0.3.0
 ```
 
 如只想本地演练构建和提交前检查，可先运行：
@@ -213,6 +258,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/release/
 - 第一次启动时，Windows 防火墙可能询问是否允许访问网络；局域网使用需要允许“专用网络”。
 - 真实课堂瓶颈通常是 Wi-Fi、电脑热点或路由器带宽，而不是 StaticDock 进程本身。
 - 公开网络环境下不要挂载包含敏感文件的目录。
+- 上传功能没有鉴权，仅在可信局域网环境使用。
 
 ## License
 
