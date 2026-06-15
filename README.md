@@ -104,7 +104,6 @@ gui/                 C# WinForms GUI 源码
 resources/           默认资源目录和浏览器资源管理台
 package/windows/     Windows 发布包启动脚本来源
 scripts/release/     release 自动化和包检查脚本
-scripts/windows/     Windows fallback 脚本
 tools/loadtest/      压测工具脚本
 loadtest/            压测素材
 docs/                架构和维护文档
